@@ -67,7 +67,7 @@ void Server::stop() {
 
         _waiting_room->stop();
         for (const auto& room : _rooms | std::views::values)
-            room->start();
+            room->stop();
 
         cleanup_promise.set_value();
     });
@@ -77,15 +77,19 @@ void Server::stop() {
 }
 
 void Server::create_client_deferred(boost::asio::ip::tcp::socket&& socket) {
+    static std::atomic<u64> temp_client_id_generator {0};
+
     auto new_client {std::make_shared<Client>(
+        ++temp_client_id_generator,
         std::move(socket),
+        _waiting_room,
         [this](std::shared_ptr<Client> client) mutable {
             remove_client_deferred(std::move(client));
         })};
 
     dispatch(_io_strand, [this, new_client = std::move(new_client)] mutable {
-        _clients.insert(new_client->id(), new_client);
-        _waiting_room->add_client_deferred(new_client);
+        _clients[new_client->id()] = new_client;
+        _waiting_room->add_client_deferred(std::move(new_client));
     });
 }
 

@@ -1,8 +1,7 @@
 #pragma once
 
 #include <entt/entt.hpp>
-#include <spire/component/physics/transform.hpp>
-#include <spire/component/physics/velocity.hpp>
+#include <spire/component/physics_components.hpp>
 #include <spire/core/units.hpp>
 
 
@@ -18,8 +17,8 @@ public:
 };
 
 inline void PhysicsSystem::update(entt::registry& registry, const f32 dt) {
-    registry.view<Transform, Velocity>().each([dt](auto& transform, auto& velocity) {
-        transform.position += dt * velocity.v;
+    registry.view<Transform, DynamicPhysics>().each([dt](auto& transform, auto& dynamic) {
+        transform.position += dt * dynamic.velocity;
     });
 }
 }

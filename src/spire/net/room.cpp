@@ -5,12 +5,10 @@ namespace spire::net {
 Room::Room(
     const u32 id,
     boost::asio::any_io_executor& io_executor,
-    tf::Executor& system_executor,
-    MessageHandler&& message_handler)
+    tf::Executor& work_executor)
     : _id {id},
     _io_executor {io_executor},
-    _system_executor {system_executor},
-    _message_handler {std::move(message_handler)} {}
+    _work_executor {work_executor} {}
 
 Room::~Room() {
     stop();
@@ -27,12 +25,13 @@ void Room::start() {
 void Room::stop() {
     if (!_is_running.exchange(false)) return;
 
-    //TODO: Cleanup <- Data race with update function
+    // TODO: Cleanup <- Data race with update function
+    // Add is_updating?
 }
 
 void Room::add_client_deferred(std::shared_ptr<Client> client) {
     _tasks.push([this, client = std::move(client)] mutable {
-        _clients.insert_or_assign(client->id(), client);
+        _clients[client->id()] = client;
 
         on_client_entered(client);
     });
@@ -64,13 +63,14 @@ void Room::broadcast_message_deferred(std::shared_ptr<OutMessage> message) {
 void Room::update(const time_point<steady_clock> last_update_time) {
     if (!_is_running) return;
 
-    const auto now {steady_clock::now()};
-    const f32 dt {duration<f32, std::milli> {now - last_update_time}.count()};
+    tf::Taskflow taskflow {};
 
+    // TODO: IO threads are handling messages and tasks
+    // -> Let work threads handle these
     std::queue<std::unique_ptr<InMessage>> messages;
     _messages.swap(messages);
     while (!messages.empty()) {
-        _message_handler.handle_message(std::move(messages.front()));
+        _handler_controller.handle_message(std::move(messages.front()));
         messages.pop();
     }
 
@@ -81,15 +81,18 @@ void Room::update(const time_point<steady_clock> last_update_time) {
         tasks.pop();
     }
 
-    tf::Taskflow system_taskflow {};
-    compose_systems(system_taskflow, now, dt);
+    const auto now {steady_clock::now()};
+    const f32 dt {duration<f32, std::milli> {now - last_update_time}.count()};
 
-    auto update_more = [self = shared_from_this(), now] mutable {
-        post(self->_io_executor, [self = std::move(self), now] {
+    compose_systems(taskflow, now, dt);
+
+    // Run and update again
+    // TODO: The shorter a room's update time, the more it updates --> Uneven updates
+    // --> Use co_spawn and sleep for minimum interval rate? <-- Don't use this_thread::sleep because it will block the thread, so that reduces worker in the thread pool
+    _work_executor.run(std::move(taskflow), [self = shared_from_this(), now] mutable {
+        post(self->_io_executor, [self, now] {
             self->update(now);
         });
-    };
-
-    _system_executor.run(std::move(system_taskflow), std::move(update_more));
+    });
 }
 }

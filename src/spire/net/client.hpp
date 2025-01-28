@@ -7,7 +7,7 @@
 namespace spire::net {
 class Room;
 
-class Client final : std::enable_shared_from_this<Client>, boost::noncopyable {
+class Client final : public std::enable_shared_from_this<Client>, boost::noncopyable {
 public:
     enum class StopCode {
         Normal,
@@ -18,7 +18,9 @@ public:
     };
 
     Client(
+        u64 id,
         boost::asio::ip::tcp::socket&& socket,
+        const std::shared_ptr<Room>& current_room,
         std::function<void(std::shared_ptr<Client>)>&& on_stop);
     ~Client();
 
@@ -30,6 +32,7 @@ public:
 
     void authenticate(u32 account_id, u32 character_id);
 
+    u64 id() const { return _character_id; }
     u64 account_id() const { return _account_id; }
     u64 character_id() const { return _character_id; }
     milliseconds ping() const { return _ping.load(); }
@@ -48,6 +51,6 @@ private:
     std::atomic<std::weak_ptr<Room>> _current_room;
 
     u64 _account_id {};
-    u64 _character_id {};
+    u64 _character_id;
 };
 }

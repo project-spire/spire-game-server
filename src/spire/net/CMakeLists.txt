@@ -3,11 +3,12 @@ target_sources(base_lib PUBLIC
     client.hpp
     connection.cpp
     connection.hpp
+    district.cpp
+    district.hpp
     heartbeater.cpp
     heartbeater.hpp
     message.cpp
     message.hpp
-    message_handler.hpp
     room.cpp
     room.hpp
     server.cpp

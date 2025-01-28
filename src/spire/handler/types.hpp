@@ -1,6 +1,5 @@
 #pragma once
 
-#include <spire/msg/base_message.pb.h>
 #include <spire/net/client.hpp>
 
 namespace spire {

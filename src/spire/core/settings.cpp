@@ -22,7 +22,7 @@ void Settings::init() {
 
     _listen_port = std::stoi(std::getenv("SPIRE_GAME_LISTEN_PORT"));
     _listen_backlog = settings["listen_backlog"]
-        ? settings["listen_backlog"].as<u16>
+        ? settings["listen_backlog"].as<u16>()
         : boost::asio::socket_base::max_listen_connections;
 
     _auth_jwt_key = read_file_line(std::getenv("SPIRE_AUTH_JWT_KEY_FILE"));
