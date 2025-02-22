@@ -1,3 +1,7 @@
+include!(concat!(env!("OUT_DIR"), "/spire.msg.rs"));
+
 fn main() {
-    println!("Hello, world!");
+    let heartbeat = Heartbeat {};
+
+    println!("Created heartbeat message!");
 }
