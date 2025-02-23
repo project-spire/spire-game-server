@@ -1,34 +1,36 @@
-use super::session;
+use crate::core::session::Session;
 use std::error::Error;
-use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 
-struct Server {
-    listener: TcpListener,
-
+pub struct Server {
     shutdown_tx: broadcast::Sender<()>,
 }
 
 impl Server {
-    pub async fn new(addr: &str) -> Result<Self, Box<dyn Error>> {
-        let listener = TcpListener::bind(addr).await?;
+    pub fn new() -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
-        Ok(Server {
-            listener,
-            shutdown_tx,
-        })
+        Server { shutdown_tx }
     }
 
-    pub async fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        println!("Running server on {}", self.listener.local_addr()?);
+    pub async fn run(&mut self, addr: &str) -> Result<(), Box<dyn Error>> {
+        let listener = TcpListener::bind(addr).await?;
+        println!("Listening on {}", listener.local_addr()?);
 
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         loop {
             tokio::select! {
-                result = self.listener.accept() => self.on_accept(result)?,
+                result = listener.accept() => match result {
+                    Ok((socket, addr)) => {
+                        println!("Accepted connection from {}", addr);
+                        self.on_accept(socket);
+                    },
+                    Err(e) => {
+                        eprintln!("Error accepting connection: {}", e);
+                    }
+                },
                 _ = shutdown_rx.recv() => {
                     println!("Server shutting down...");
                     break;
@@ -43,24 +45,16 @@ impl Server {
         let _ = self.shutdown_tx.send(());
     }
 
-    async fn on_accept(
-        &self,
-        result: tokio::io::Result<(TcpStream, SocketAddr)>,
-    ) -> Result<(), Box<dyn Error>> {
-        match result {
-            Ok((socket, addr)) => {
-                println!("New connection from {}", addr);
+    fn on_accept(&self, stream: TcpStream) {
+        let (mut session, out_message_rx) = Session::new();
 
-                let mut client = Client::new(socket, self.shutdown_tx.subscribe());
-                tokio::spawn(async move {
-                    if let Err(e) = client.run().await {
-                        eprintln!("Error handling client {}: {}", client, e);
-                    }
-                })
+        tokio::spawn(async move {
+            if let Err(e) = session
+                .run(stream, out_message_rx, self.shutdown_tx.subscribe())
+                .await
+            {
+                eprintln!("Error client running: {}", e);
             }
-            Err(e) => {
-                eprintln!("Error accepting connection: {}", e);
-            }
-        }
+        });
     }
 }

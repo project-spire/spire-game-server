@@ -7,7 +7,10 @@ pub struct Resource {
 
 impl Resource {
     pub fn new(mongo: Client, database_name: String) -> Resource {
-        Resource { mongo, database_name }
+        Resource {
+            mongo,
+            database_name,
+        }
     }
 
     pub fn database(&self) -> Database {
