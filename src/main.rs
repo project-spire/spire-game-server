@@ -1,4 +1,4 @@
-mod net;
+mod core;
 
 include!(concat!(env!("OUT_DIR"), "/spire.msg.rs"));
 

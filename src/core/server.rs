@@ -1,3 +1,4 @@
+use super::session;
 use std::error::Error;
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
@@ -6,7 +7,7 @@ use tokio::sync::broadcast;
 struct Server {
     listener: TcpListener,
 
-    shutdown_tx: broadcast::Sender<()>
+    shutdown_tx: broadcast::Sender<()>,
 }
 
 impl Server {
@@ -16,7 +17,7 @@ impl Server {
 
         Ok(Server {
             listener,
-            shutdown_tx
+            shutdown_tx,
         })
     }
 
@@ -42,7 +43,10 @@ impl Server {
         let _ = self.shutdown_tx.send(());
     }
 
-    async fn on_accept(&self, result: tokio::io::Result<(TcpStream, SocketAddr)>) -> Result<(), Box<dyn Error>> {
+    async fn on_accept(
+        &self,
+        result: tokio::io::Result<(TcpStream, SocketAddr)>,
+    ) -> Result<(), Box<dyn Error>> {
         match result {
             Ok((socket, addr)) => {
                 println!("New connection from {}", addr);

@@ -3,14 +3,13 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 
-struct Client {
-    socket: TcpStream,
-    shutdown_rx: broadcast::Receiver<()>,
+pub struct Session {
+
 }
 
-impl Client {
-    pub fn new(socket: TcpStream, shutdown_rx: broadcast::Receiver<()> ) -> Self {
-        Client {
+impl Session {
+    pub fn new(socket: TcpStream, shutdown_rx: broadcast::Receiver<()>) -> Self {
+        Session {
             socket,
             shutdown_rx,
         }
@@ -34,9 +33,7 @@ impl Client {
         }
     }
 
-    pub fn send(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
-
-    }
+    pub fn send(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {}
 
     async fn recv(&mut self) -> Result<(), Box<dyn Error>> {
         let mut header_buf = [0u8; 4];

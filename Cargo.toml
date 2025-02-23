@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-prost = "0.13"
+bevy_ecs = "0.15.2"
+jsonwebtoken = "9"
 mongodb = "3.2.1"
-specs = "0.20.0"
+prost = "0.13"
+serde = {version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
 glob = "0.3.2"
