@@ -1,3 +1,5 @@
+use std::net::{IpAddr, SocketAddr};
+
 mod core;
 
 // include!(concat!(env!("OUT_DIR"), "/spire.msg.rs"));
@@ -5,5 +7,5 @@ mod core;
 #[tokio::main]
 async fn main() {
     let mut server = core::server::Server::new();
-    let _ = server.run("localhost:6400").await;
+    let _ = server.run(6400).await;
 }

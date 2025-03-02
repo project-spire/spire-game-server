@@ -17,7 +17,7 @@ impl Resource {
         self.mongo.database(&self.database_name)
     }
 
-    pub fn collection<T>(&self, name: &str) -> Collection<T> {
+    pub fn collection<T: Send + Sync>(&self, name: &str) -> Collection<T> {
         self.database().collection::<T>(name)
     }
 }
