@@ -4,6 +4,5 @@ mod physics;
 
 #[tokio::main]
 async fn main() {
-    let mut server = core::server::Server::new();
-    let _ = server.run(6400).await;
+    let _ = core::server::run_server(6400).await;
 }
