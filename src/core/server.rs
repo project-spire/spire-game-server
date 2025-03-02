@@ -1,4 +1,4 @@
-use crate::core::room::Room;
+use crate::core::room::run_room;
 use crate::core::session::run_session;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -7,17 +7,18 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
 
 pub async fn run_server(listen_port: u16) -> Result<(), Box<dyn Error>> {
-    let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
-
-    let mut waiting_room = Room::new(0, shutdown_rx.resubscribe());
-    let in_message_tx = waiting_room.in_message_tx.clone();
+    let (shutdown_tx, _) = broadcast::channel(1);
+    let shutdown_rx_listen = shutdown_tx.subscribe();
+    let shutdown_rx_room = shutdown_tx.subscribe();
+    
+    let (in_message_tx, in_message_rx) = mpsc::channel::<Vec<u8>>(1);
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
-        listen(listen_port, in_message_tx, shutdown_rx).await;
+        listen(listen_port, in_message_tx, shutdown_rx_listen).await;
     });
     tasks.spawn(async move {
-        waiting_room.run().await;
+        run_room(in_message_rx, shutdown_rx_room).await;
     });
 
     while let Some(_) = tasks.join_next().await {}
