@@ -1,5 +1,5 @@
-use crate::core::room::run_room;
 use crate::core::session::run_session;
+use crate::room::waiting_room;
 use std::error::Error;
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
@@ -10,7 +10,7 @@ pub async fn run_server(listen_port: u16) -> Result<(), Box<dyn Error>> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let shutdown_rx_listen = shutdown_tx.subscribe();
     let shutdown_rx_room = shutdown_tx.subscribe();
-    
+
     let (in_message_tx, in_message_rx) = mpsc::channel::<Vec<u8>>(1);
 
     let mut tasks = JoinSet::new();
@@ -18,7 +18,7 @@ pub async fn run_server(listen_port: u16) -> Result<(), Box<dyn Error>> {
         listen(listen_port, in_message_tx, shutdown_rx_listen).await;
     });
     tasks.spawn(async move {
-        run_room(in_message_rx, shutdown_rx_room).await;
+        waiting_room::run(in_message_rx, shutdown_rx_room).await;
     });
 
     while let Some(_) = tasks.join_next().await {}

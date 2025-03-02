@@ -1,5 +1,6 @@
 mod core;
 mod physics;
+mod room;
 // include!(concat!(env!("OUT_DIR"), "/spire.msg.rs"));
 
 #[tokio::main]
