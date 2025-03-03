@@ -15,3 +15,7 @@ impl PlayerRole {
         PlayerRole { account_id, character_id }
     }
 }
+
+impl Default for PlayerRole {
+    fn default() -> Self { PlayerRole::new(0, 0) }
+}
