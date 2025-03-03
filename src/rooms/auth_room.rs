@@ -1,6 +1,6 @@
 use crate::core::room::RoomContext;
 use crate::core::session::SessionContext;
-use crate::protocol::auth::{auth_protocol::Protocol, AuthProtocol, Login};
+use crate::protocol::auth::{auth_protocol::Protocol, AuthProtocol, Login, Role};
 use bytes::Bytes;
 use prost::Message;
 use tokio::sync::{broadcast, mpsc};
@@ -31,15 +31,21 @@ fn handle(ctx: SessionContext, data: Bytes) {
     let protocol = AuthProtocol::decode(data);
     if let Err(e) = protocol {
         eprintln!("Failed to decode auth protocol: {}", e);
-        //TODO: Stop session
+        _ = ctx.close_tx.send(());
         return;
     }
 
     match protocol.unwrap().protocol {
         Some(Protocol::Login(login)) => { handle_login(ctx, login); }
-        None => {}
+        None => { _ = ctx.close_tx.send(()); }
     }
 }
 
 fn handle_login(ctx: SessionContext, login: Login) {
+    match login.role {
+        r if r == Role::Player as i32 => {}
+        r if r == Role::CheatPlayer as i32 => {}
+        r if r == Role::Admin as i32 => {}
+        _ => { _ = ctx.close_tx.send(()); }
+    }
 }

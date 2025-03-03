@@ -16,6 +16,7 @@ pub struct SessionContext {
     pub role: Arc<dyn Role>,
     pub send_tx: mpsc::Sender<Bytes>,
     pub transfer_tx: broadcast::Sender<InMessageTx>,
+    pub close_tx: broadcast::Sender<()>,
 }
 
 impl SessionContext {
@@ -23,8 +24,9 @@ impl SessionContext {
         role: Arc<dyn Role>,
         send_tx: mpsc::Sender<Bytes>,
         transfer_tx: broadcast::Sender<InMessageTx>,
+        close_tx: broadcast::Sender<()>,
     ) -> SessionContext {
-        SessionContext { role, send_tx, transfer_tx }
+        SessionContext { role, send_tx, transfer_tx, close_tx }
     }
 }
 
@@ -42,12 +44,13 @@ pub async fn run_session(
     let peer_addr = stream.peer_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
     let (reader, writer) = tokio::io::split(stream);
     let (send_tx, send_rx) = mpsc::channel(64);
+    let (close_tx, mut close_rx) = broadcast::channel(1);
 
     println!("Session {} has started", peer_addr);
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
-        recv(reader, recv_tx, send_tx, role).await;
+        recv(reader, recv_tx, send_tx, close_tx, role).await;
     });
     tasks.spawn(async move {
         send(writer, send_rx).await;
@@ -55,6 +58,7 @@ pub async fn run_session(
 
     tokio::select! {
         _ = tasks.join_next() => {}
+        _ = close_rx.recv() => {}
         _ = shutdown_rx.recv() => {}
     }
     // Reaching this section means that the session has been shutdown or had errored.
@@ -68,6 +72,7 @@ async fn recv(
     mut reader: ReadHalf<TcpStream>,
     mut recv_tx: InMessageTx,
     send_tx: mpsc::Sender<Bytes>,
+    close_tx: broadcast::Sender<()>,
     role: Arc<dyn Role>,
 ) {
     let (transfer_tx, mut transfer_rx) = broadcast::channel(1);
@@ -79,7 +84,8 @@ async fn recv(
                     recv_tx = tx;
                 }
 
-                let ctx = SessionContext::new(role.clone(), send_tx.clone(), transfer_tx.clone());
+                let ctx = SessionContext::new(
+                    role.clone(), send_tx.clone(), transfer_tx.clone(), close_tx.clone());
                 _ = recv_tx.send((ctx, buf)).await;
             }
             Ok(Recv::EOF) => {

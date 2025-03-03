@@ -1,4 +1,4 @@
-use crate::core::role::CharacterRole;
+use crate::core::role::DefaultRole;
 use crate::core::room::RoomContext;
 use crate::core::session::{run_session, InMessageTx};
 use crate::rooms::auth_room;
@@ -69,7 +69,7 @@ fn accept(
     in_message_tx: InMessageTx,
     shutdown_rx: broadcast::Receiver<()>,
 ) {
-    let role = Arc::new(CharacterRole::new());
+    let role = Arc::new(DefaultRole::new());
 
     tokio::spawn(async move {
         _ = run_session(stream, in_message_tx, role, shutdown_rx).await
