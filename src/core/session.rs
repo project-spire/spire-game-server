@@ -1,129 +1,128 @@
+use crate::core::role::Role;
 use std::error::Error;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
 
-enum In {
-    Message(Vec<u8>),
+pub type InMessage = (SessionContext, Vec<u8>);
+pub type InMessageTx = mpsc::Sender<InMessage>;
+pub type InMessageRx = mpsc::Receiver<InMessage>;
+
+pub struct SessionContext {
+    pub role: Arc<dyn Role>,
+    pub send_tx: mpsc::Sender<Vec<u8>>,
+    pub transfer_tx: broadcast::Sender<InMessageTx>,
+}
+
+impl SessionContext {
+    pub fn new(
+        role: Arc<dyn Role>,
+        send_tx: mpsc::Sender<Vec<u8>>,
+        transfer_tx: broadcast::Sender<InMessageTx>,
+    ) -> SessionContext {
+        SessionContext { role, send_tx, transfer_tx }
+    }
+}
+
+enum Recv {
+    Buf(Vec<u8>),
     EOF,
 }
 
 pub async fn run_session(
     stream: TcpStream,
-    in_message_tx: mpsc::Sender<Vec<u8>>,
-    transfer_rx: broadcast::Receiver<mpsc::Sender<Vec<u8>>>,
-    shutdown_rx: broadcast::Receiver<()>,
-) -> Result<(), Box<dyn Error>> {
-    let peer_addr = stream.peer_addr()?;
+    recv_tx: InMessageTx,
+    role: Arc<dyn Role>,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) {
+    let peer_addr = stream.peer_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
     let (reader, writer) = tokio::io::split(stream);
-    let (out_message_tx, out_message_rx) = mpsc::channel::<String>(32);
-    let shutdown_rx_recv = shutdown_rx.resubscribe();
-    let shutdown_rx_send = shutdown_rx.resubscribe();
+    let (send_tx, send_rx) = mpsc::channel(64);
 
     println!("Session {} has started", peer_addr);
 
     let mut tasks = JoinSet::new();
-    let recv_handle = tasks.spawn(async move {
-        recv(reader, in_message_tx, transfer_rx, shutdown_rx_recv).await;
+    tasks.spawn(async move {
+        recv(reader, recv_tx, send_tx, role).await;
     });
-    let send_handle = tasks.spawn(async move {
-        send(writer, out_message_rx, shutdown_rx_send).await;
+    tasks.spawn(async move {
+        send(writer, send_rx).await;
     });
 
-    while let Some(_) = tasks.join_next().await {
-        // Returning from any of recv/send task means that the session has ended or errored.
-        // So abort the tasks.
-        recv_handle.abort();
-        send_handle.abort();
+    tokio::select! {
+        _ = tasks.join_next() => {}
+        _ = shutdown_rx.recv() => {}
     }
+    // Reaching this section means that the session has been shutdown or had errored.
+    // So abort the tasks.
+    tasks.shutdown().await;
 
     println!("Session {} has ended", peer_addr);
-    Ok(())
 }
 
 async fn recv(
     mut reader: ReadHalf<TcpStream>,
-    mut in_message_tx: mpsc::Sender<Vec<u8>>,
-    mut transfer_rx: broadcast::Receiver<mpsc::Sender<Vec<u8>>>,
-    mut shutdown_rx: broadcast::Receiver<()>) {
+    mut recv_tx: InMessageTx,
+    send_tx: mpsc::Sender<Vec<u8>>,
+    role: Arc<dyn Role>,
+) {
+    let (transfer_tx, mut transfer_rx) = broadcast::channel(1);
+
     loop {
-        tokio::select! {
-            result = transfer_rx.recv() => match result {
-                Ok(tx) => {
-                    in_message_tx = tx;
+        match recv_internal(&mut reader).await {
+            Ok(Recv::Buf(buf)) => {
+                if let Ok(tx) = transfer_rx.try_recv() {
+                    recv_tx = tx;
                 }
-                Err(e) => {
-                    eprintln!("Error receiving receiver: {}", e);
-                    break;
-                }
-            },
-            result = recv_internal(&mut reader) => match result {
-                Ok(i) => match i {
-                    In::Message(buf) => {
-                        _ = in_message_tx.send(buf).await;
-                    }
-                    In::EOF => {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error receiving message: {}", e);
-                    break;
-                }
-            },
-            _ = shutdown_rx.recv() => {
+
+                let ctx = SessionContext::new(role.clone(), send_tx.clone(), transfer_tx.clone());
+                _ = recv_tx.send((ctx, buf)).await;
+            }
+            Ok(Recv::EOF) => {
+                break;
+            }
+            Err(e) => {
+                eprintln!("Error receiving: {}", e);
                 break;
             }
         }
     }
 }
 
-async fn recv_internal(reader: &mut ReadHalf<TcpStream>) -> Result<In, Box<dyn Error + Send + Sync>> {
+async fn recv_internal(reader: &mut ReadHalf<TcpStream>) -> Result<Recv, Box<dyn Error + Send + Sync>> {
     let mut header_buf = [0u8; 4];
     let n = reader.read_exact(&mut header_buf).await?;
-    if n == 0 {
-        return Ok(In::EOF);
+    if n == 0  {
+        return Ok(Recv::EOF);
     }
 
     let body_len = u32::from_ne_bytes(header_buf) as usize;
     let mut body_buf = vec![0u8; body_len];
 
-    let n = reader.read_exact(&mut body_buf).await?;
-    if n == 0 {
-        return Ok(In::EOF);
+    reader.read_exact(&mut body_buf).await?;
+    if n == 0  {
+        return Ok(Recv::EOF);
     }
 
-    Ok(In::Message(body_buf))
+    Ok(Recv::Buf(body_buf))
 }
 
 async fn send(
     mut writer: WriteHalf<TcpStream>,
-    mut out_message_rx: mpsc::Receiver<String>,
-    mut shutdown_rx: broadcast::Receiver<()>,
+    mut send_rx: mpsc::Receiver<Vec<u8>>,
 ) {
-    async fn write(writer: &mut WriteHalf<TcpStream>, message: Option<String>) -> bool {
-        if let None = message {
-            return false;
-        }
-
-        let message = message.unwrap();
-        if let Err(e) = writer.write_all(message.as_bytes()).await {
-            eprintln!("Error sending message: {}", e);
-            return false;
-        }
-
-        true
-    }
-
     loop {
-        tokio::select! {
-            message = out_message_rx.recv() => {
-                if !write(&mut writer, message).await {
+        match send_rx.recv().await {
+            Some(buf) => {
+                if let Err(e) = writer.write_all(buf.as_slice()).await {
+                    eprintln!("Error sending: {}", e);
                     break;
                 }
-            },
-            _ = shutdown_rx.recv() => {
+            }
+            None => {
                 break;
             }
         }

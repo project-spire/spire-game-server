@@ -1,4 +1,6 @@
 pub mod resource;
+pub mod role;
+pub mod room;
 pub mod server;
 
-mod session;
+pub mod session;
