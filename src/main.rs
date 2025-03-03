@@ -4,7 +4,6 @@ mod core;
 mod physics;
 mod rooms;
 mod protocol;
-mod roles;
 
 #[tokio::main]
 async fn main() {

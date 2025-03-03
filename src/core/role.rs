@@ -1,13 +1,17 @@
-pub trait Role: Send + Sync {
-    fn is_authenticated(&self) -> bool;
+pub enum Role {
+    Default,
+    Player(PlayerRole),
+    CheatPlayer(PlayerRole),
+    Admin,
 }
 
-pub struct DefaultRole {}
-
-impl Role for DefaultRole {
-    fn is_authenticated(&self) -> bool { false }
+pub struct PlayerRole {
+    pub account_id: u64,
+    pub character_id: u64,
 }
 
-impl DefaultRole {
-    pub fn new() -> Self { DefaultRole {} }
+impl PlayerRole {
+    pub fn new(account_id: u64, character_id: u64) -> Self {
+        PlayerRole { account_id, character_id }
+    }
 }

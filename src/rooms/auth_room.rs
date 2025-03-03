@@ -3,6 +3,7 @@ use crate::core::session::SessionContext;
 use crate::protocol::auth::{auth_protocol::Protocol, AuthProtocol, Login, Role};
 use bytes::Bytes;
 use prost::Message;
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
 pub fn run(mut shutdown_rx: broadcast::Receiver<()>) -> RoomContext {
@@ -27,7 +28,7 @@ pub fn run(mut shutdown_rx: broadcast::Receiver<()>) -> RoomContext {
     ctx
 }
 
-fn handle(ctx: SessionContext, data: Bytes) {
+fn handle(ctx: Arc<SessionContext>, data: Bytes) {
     let protocol = AuthProtocol::decode(data);
     if let Err(e) = protocol {
         eprintln!("Failed to decode auth protocol: {}", e);
@@ -41,7 +42,7 @@ fn handle(ctx: SessionContext, data: Bytes) {
     }
 }
 
-fn handle_login(ctx: SessionContext, login: Login) {
+fn handle_login(ctx: Arc<SessionContext>, login: Login) {
     match login.role {
         r if r == Role::Player as i32 => {}
         r if r == Role::CheatPlayer as i32 => {}

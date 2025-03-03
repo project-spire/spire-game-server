@@ -1,10 +1,9 @@
-use crate::core::role::DefaultRole;
+use crate::core::role::Role;
 use crate::core::room::RoomContext;
 use crate::core::session::{run_session, InMessageTx};
 use crate::rooms::auth_room;
 use std::error::Error;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
@@ -69,9 +68,7 @@ fn accept(
     in_message_tx: InMessageTx,
     shutdown_rx: broadcast::Receiver<()>,
 ) {
-    let role = Arc::new(DefaultRole::new());
-
     tokio::spawn(async move {
-        _ = run_session(stream, in_message_tx, role, shutdown_rx).await
+        _ = run_session(stream, in_message_tx, Role::Default, shutdown_rx).await
     });
 }

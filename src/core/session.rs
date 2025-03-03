@@ -8,23 +8,23 @@ use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
 
-pub type InMessage = (SessionContext, Bytes);
+pub type InMessage = (Arc<SessionContext>, Bytes);
 pub type InMessageTx = mpsc::Sender<InMessage>;
 pub type InMessageRx = mpsc::Receiver<InMessage>;
 
 pub struct SessionContext {
-    pub role: Arc<dyn Role>,
+    pub role: Role,
     pub send_tx: mpsc::Sender<Bytes>,
-    pub transfer_tx: broadcast::Sender<InMessageTx>,
-    pub close_tx: broadcast::Sender<()>,
+    pub transfer_tx: mpsc::Sender<InMessageTx>,
+    pub close_tx: mpsc::Sender<()>,
 }
 
 impl SessionContext {
     pub fn new(
-        role: Arc<dyn Role>,
+        role: Role,
         send_tx: mpsc::Sender<Bytes>,
-        transfer_tx: broadcast::Sender<InMessageTx>,
-        close_tx: broadcast::Sender<()>,
+        transfer_tx: mpsc::Sender<InMessageTx>,
+        close_tx: mpsc::Sender<()>,
     ) -> SessionContext {
         SessionContext { role, send_tx, transfer_tx, close_tx }
     }
@@ -38,13 +38,13 @@ enum Recv {
 pub async fn run_session(
     stream: TcpStream,
     recv_tx: InMessageTx,
-    role: Arc<dyn Role>,
+    role: Role,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
     let peer_addr = stream.peer_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
     let (reader, writer) = tokio::io::split(stream);
     let (send_tx, send_rx) = mpsc::channel(64);
-    let (close_tx, mut close_rx) = broadcast::channel(1);
+    let (close_tx, mut close_rx) = mpsc::channel(1);
 
     println!("Session {} has started", peer_addr);
 
@@ -72,21 +72,19 @@ async fn recv(
     mut reader: ReadHalf<TcpStream>,
     mut recv_tx: InMessageTx,
     send_tx: mpsc::Sender<Bytes>,
-    close_tx: broadcast::Sender<()>,
-    role: Arc<dyn Role>,
+    close_tx: mpsc::Sender<()>,
+    role: Role,
 ) {
-    let (transfer_tx, mut transfer_rx) = broadcast::channel(1);
+    let (transfer_tx, mut transfer_rx) = mpsc::channel(1);
+    let ctx = Arc::new(SessionContext::new(role, send_tx, transfer_tx, close_tx));
 
     loop {
         match recv_internal(&mut reader).await {
-            Ok(Recv::Buf(buf)) => {
+            Ok(Recv::Buf(data)) => {
                 if let Ok(tx) = transfer_rx.try_recv() {
                     recv_tx = tx;
                 }
-
-                let ctx = SessionContext::new(
-                    role.clone(), send_tx.clone(), transfer_tx.clone(), close_tx.clone());
-                _ = recv_tx.send((ctx, buf)).await;
+                _ = recv_tx.send((ctx.clone(), data)).await;
             }
             Ok(Recv::EOF) => {
                 break;
