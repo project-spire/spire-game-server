@@ -1,47 +1,44 @@
 use crate::core::role::CharacterRole;
 use crate::core::room::RoomContext;
 use crate::core::session::{run_session, InMessageTx};
-use crate::rooms::waiting_room;
+use crate::rooms::auth_room;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
-pub struct ServerContext {
-    waiting_room_ctx: RoomContext,
-}
+pub struct ServerContext {}
 unsafe impl Send for ServerContext {}
 unsafe impl Sync for ServerContext {}
 
 impl ServerContext {
-    pub fn new(waiting_room_ctx: RoomContext) -> ServerContext {
-        ServerContext { waiting_room_ctx }
+    pub fn new() -> ServerContext {
+        ServerContext {}
     }
 }
 
 pub async fn run_server(listen_port: u16) -> Result<(), Box<dyn Error>> {
     let (shutdown_tx, _) = broadcast::channel(1);
-    let waiting_room_tx = waiting_room::run(shutdown_tx.subscribe());
-    
+
     let mut tasks = JoinSet::new();
-    
+
+    let auth_room_ctx = auth_room::run(shutdown_tx.subscribe());
     let shutdown_rx_listen = shutdown_tx.subscribe();
-    let ctx = ServerContext::new(waiting_room_tx.clone());
     tasks.spawn(async move {
-        listen(listen_port, ctx, shutdown_rx_listen).await;
+        listen(listen_port, auth_room_ctx, shutdown_rx_listen).await;
     });
 
     while let Some(_) = tasks.join_next().await {}
     shutdown_tx.send(())?;
-    
+
     Ok(())
 }
 
 async fn listen(
     listen_port: u16,
-    ctx: ServerContext,
+    auth_room_ctx: RoomContext,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
     let listen_addr = SocketAddr::from(([0, 0, 0, 0], listen_port));
@@ -52,7 +49,7 @@ async fn listen(
         tokio::select! {
             result = listener.accept() => match result {
                 Ok((socket, _)) => {
-                    let in_message_tx = ctx.waiting_room_ctx.in_message_tx.clone();
+                    let in_message_tx = auth_room_ctx.in_message_tx.clone();
                     accept(socket, in_message_tx, shutdown_rx.resubscribe());
                 },
                 Err(e) => {

@@ -1,4 +1,5 @@
 use crate::core::role::Role;
+use bytes::{Bytes, BytesMut};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -7,20 +8,20 @@ use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
 
-pub type InMessage = (SessionContext, Vec<u8>);
+pub type InMessage = (SessionContext, Bytes);
 pub type InMessageTx = mpsc::Sender<InMessage>;
 pub type InMessageRx = mpsc::Receiver<InMessage>;
 
 pub struct SessionContext {
     pub role: Arc<dyn Role>,
-    pub send_tx: mpsc::Sender<Vec<u8>>,
+    pub send_tx: mpsc::Sender<Bytes>,
     pub transfer_tx: broadcast::Sender<InMessageTx>,
 }
 
 impl SessionContext {
     pub fn new(
         role: Arc<dyn Role>,
-        send_tx: mpsc::Sender<Vec<u8>>,
+        send_tx: mpsc::Sender<Bytes>,
         transfer_tx: broadcast::Sender<InMessageTx>,
     ) -> SessionContext {
         SessionContext { role, send_tx, transfer_tx }
@@ -28,7 +29,7 @@ impl SessionContext {
 }
 
 enum Recv {
-    Buf(Vec<u8>),
+    Buf(Bytes),
     EOF,
 }
 
@@ -66,7 +67,7 @@ pub async fn run_session(
 async fn recv(
     mut reader: ReadHalf<TcpStream>,
     mut recv_tx: InMessageTx,
-    send_tx: mpsc::Sender<Vec<u8>>,
+    send_tx: mpsc::Sender<Bytes>,
     role: Arc<dyn Role>,
 ) {
     let (transfer_tx, mut transfer_rx) = broadcast::channel(1);
@@ -95,29 +96,29 @@ async fn recv(
 async fn recv_internal(reader: &mut ReadHalf<TcpStream>) -> Result<Recv, Box<dyn Error + Send + Sync>> {
     let mut header_buf = [0u8; 4];
     let n = reader.read_exact(&mut header_buf).await?;
-    if n == 0  {
+    if n == 0 {
         return Ok(Recv::EOF);
     }
 
     let body_len = u32::from_ne_bytes(header_buf) as usize;
-    let mut body_buf = vec![0u8; body_len];
+    let mut body_buf = BytesMut::with_capacity(body_len);
 
     reader.read_exact(&mut body_buf).await?;
-    if n == 0  {
+    if n == 0 {
         return Ok(Recv::EOF);
     }
 
-    Ok(Recv::Buf(body_buf))
+    Ok(Recv::Buf(Bytes::from(body_buf)))
 }
 
 async fn send(
     mut writer: WriteHalf<TcpStream>,
-    mut send_rx: mpsc::Receiver<Vec<u8>>,
+    mut send_rx: mpsc::Receiver<Bytes>,
 ) {
     loop {
         match send_rx.recv().await {
             Some(buf) => {
-                if let Err(e) = writer.write_all(buf.as_slice()).await {
+                if let Err(e) = writer.write_all(buf.iter().as_slice()).await {
                     eprintln!("Error sending: {}", e);
                     break;
                 }
