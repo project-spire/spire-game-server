@@ -4,35 +4,37 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::OnceLock;
 
-// config.json
-static CHEAT_ENABLED: OnceLock<bool> = OnceLock::new();
-pub fn cheat_enabled() -> bool { *CHEAT_ENABLED.get().unwrap() }
+#[derive(Debug)]
+pub struct Config {
+    pub cheat_enabled: bool,
 
-// Environment Variables
-static AUTH_KEY: OnceLock<Vec<u8>> = OnceLock::new();
-pub fn auth_key() -> &'static [u8] { (*AUTH_KEY.get().unwrap()).as_slice() }
+    pub auth_key: String,
+}
 
+static CONFIG: OnceLock<Config> = OnceLock::new();
+pub fn config() -> &'static Config { &CONFIG.get().unwrap() }
+
+#[derive(Debug, Deserialize)]
+struct ConfigJson {
+    pub cheat_enabled: bool,
+}
 
 pub fn init() {
-    init_from_json();
-    init_from_env();
-}
-
-fn init_from_json() {
-    #[derive(Deserialize)]
-    struct ConfigJson {
-        cheat_enabled: bool
-    }
-
     let path = Path::new(env!("OUT_DIR")).join("config.json");
-    println!("Initializing config from {} ...", path.display());
+    println!("Initializing config from {}...", path.display());
+    let mut json = serde_json::from_str::<ConfigJson>(&read_from_file(&path)).unwrap();
 
-    let json = serde_json::from_str::<ConfigJson>(&read_from_file(&path)).unwrap();
-    CHEAT_ENABLED.set(json.cheat_enabled).unwrap();
-}
+    println!("Initializing config from env variables...");
+    let auth_key = read_from_file(Path::new(env!("SPIRE_AUTH_KEY_FILE")));
 
-fn init_from_env() {
-    AUTH_KEY.set(read_from_file(Path::new(env!("SPIRE_AUTH_KEY_FILE"))).into_bytes()).unwrap();
+    let config = Config {
+        cheat_enabled: json.cheat_enabled,
+
+        auth_key,
+    };
+
+    CONFIG.set(config).unwrap();
+    println!("Initializing config done!");
 }
 
 fn read_from_file(path: &Path) -> String {

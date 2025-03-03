@@ -1,9 +1,9 @@
-use crate::core::config;
+use crate::core::config::config;
 use crate::core::room::RoomContext;
 use crate::core::session::SessionContext;
 use crate::protocol::auth::{auth_protocol::Protocol, AuthProtocol, Login, Role};
 use bytes::Bytes;
-use jsonwebtoken::{encode, Header, Algorithm, Validation, EncodingKey, DecodingKey};
+use jsonwebtoken::{encode, Header, Algorithm, EncodingKey};
 use prost::Message;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
@@ -68,7 +68,7 @@ async fn handle_login(ctx: Arc<SessionContext>, login: Login) {
         }),
     };
 
-    if let Err(e) = encode(&header, &claims, &EncodingKey::from_secret(config::auth_key())) {
+    if let Err(e) = encode(&header, &claims, &EncodingKey::from_secret(config().auth_key.as_bytes())) {
         eprintln!("Error validating token: {}", e);
         return;
     }
