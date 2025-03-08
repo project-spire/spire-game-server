@@ -72,4 +72,6 @@ async fn handle_login(ctx: Arc<SessionContext>, login: Login) {
         eprintln!("Error validating token: {}", e);
         return;
     }
+    
+    println!("Authenticated!");
 }
