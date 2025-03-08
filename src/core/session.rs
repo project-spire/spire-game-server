@@ -95,19 +95,21 @@ async fn recv(
             }
         }
     }
+    
+    println!("recv exiting")
 }
 
 async fn recv_internal(reader: &mut ReadHalf<TcpStream>) -> Result<Recv, Box<dyn Error + Send + Sync>> {
-    let mut header_buf = [0u8; 4];
+    let mut header_buf = [0u8; 2];
     let n = reader.read_exact(&mut header_buf).await?;
     if n == 0 {
         return Ok(Recv::EOF);
     }
 
-    let body_len = u32::from_ne_bytes(header_buf) as usize;
+    let body_len = u16::from_be_bytes(header_buf) as usize;
     let mut body_buf = BytesMut::with_capacity(body_len);
 
-    reader.read_exact(&mut body_buf).await?;
+    let n = reader.read_exact(&mut body_buf).await?;
     if n == 0 {
         return Ok(Recv::EOF);
     }
@@ -132,4 +134,6 @@ async fn send(
             }
         }
     }
+    
+    println!("send exiting");
 }

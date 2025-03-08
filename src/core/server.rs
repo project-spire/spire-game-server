@@ -68,6 +68,11 @@ fn accept(
     in_message_tx: InMessageTx,
     shutdown_rx: broadcast::Receiver<()>,
 ) {
+    if let Err(e) = stream.set_nodelay(true) {
+        eprintln!("Error setting nodelay: {}", e);
+        return;
+    }
+
     tokio::spawn(async move {
         _ = run_session(stream, in_message_tx, Role::Default, shutdown_rx).await
     });

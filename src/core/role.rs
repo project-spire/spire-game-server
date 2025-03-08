@@ -1,21 +1,21 @@
 pub enum Role {
     Default,
-    Player(PlayerRole),
-    CheatPlayer(PlayerRole),
+    Player(Account),
+    CheatPlayer(Account),
     Admin,
 }
 
-pub struct PlayerRole {
+pub struct Account {
     pub account_id: u64,
     pub character_id: u64,
 }
 
-impl PlayerRole {
+impl Account {
     pub fn new(account_id: u64, character_id: u64) -> Self {
-        PlayerRole { account_id, character_id }
+        Account { account_id, character_id }
     }
 }
 
-impl Default for PlayerRole {
-    fn default() -> Self { PlayerRole::new(0, 0) }
+impl Default for Account {
+    fn default() -> Self { Account::new(0, 0) }
 }
