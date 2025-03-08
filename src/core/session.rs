@@ -1,8 +1,8 @@
 use crate::core::role::Role;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use std::error::Error;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
@@ -13,7 +13,7 @@ pub type InMessageTx = mpsc::Sender<InMessage>;
 pub type InMessageRx = mpsc::Receiver<InMessage>;
 
 pub struct SessionContext {
-    pub role: Role,
+    pub role: OnceLock<Role>,
     pub send_tx: mpsc::Sender<Bytes>,
     pub transfer_tx: mpsc::Sender<InMessageTx>,
     pub close_tx: mpsc::Sender<()>,
@@ -21,11 +21,11 @@ pub struct SessionContext {
 
 impl SessionContext {
     pub fn new(
-        role: Role,
         send_tx: mpsc::Sender<Bytes>,
         transfer_tx: mpsc::Sender<InMessageTx>,
         close_tx: mpsc::Sender<()>,
     ) -> SessionContext {
+        let role = OnceLock::new();
         SessionContext { role, send_tx, transfer_tx, close_tx }
     }
 }
@@ -38,7 +38,6 @@ enum Recv {
 pub async fn run_session(
     stream: TcpStream,
     recv_tx: InMessageTx,
-    role: Role,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
     let peer_addr = stream.peer_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
@@ -50,7 +49,7 @@ pub async fn run_session(
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
-        recv(reader, recv_tx, send_tx, close_tx, role).await;
+        recv(reader, recv_tx, send_tx, close_tx).await;
     });
     tasks.spawn(async move {
         send(writer, send_rx).await;
@@ -72,11 +71,10 @@ async fn recv(
     mut reader: ReadHalf<TcpStream>,
     mut recv_tx: InMessageTx,
     send_tx: mpsc::Sender<Bytes>,
-    close_tx: mpsc::Sender<()>,
-    role: Role,
+    close_tx: mpsc::Sender<()>
 ) {
     let (transfer_tx, mut transfer_rx) = mpsc::channel(1);
-    let ctx = Arc::new(SessionContext::new(role, send_tx, transfer_tx, close_tx));
+    let ctx = Arc::new(SessionContext::new(send_tx, transfer_tx, close_tx));
 
     loop {
         match recv_internal(&mut reader).await {

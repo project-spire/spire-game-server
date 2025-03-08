@@ -74,6 +74,6 @@ fn accept(
     }
 
     tokio::spawn(async move {
-        _ = run_session(stream, in_message_tx, Role::Default, shutdown_rx).await
+        _ = run_session(stream, in_message_tx, shutdown_rx).await
     });
 }

@@ -1,5 +1,7 @@
 use crate::core::config::config;
 use crate::core::room::RoomContext;
+use crate::core::role;
+use crate::core::role::Account;
 use crate::core::session::SessionContext;
 use crate::protocol::auth::{auth_protocol::Protocol, AuthProtocol, Login, Role};
 use bytes::Bytes;
@@ -58,11 +60,23 @@ async fn handle_login(ctx: Arc<SessionContext>, login: Login) {
         aid: login.account_id.to_string(),
         cid: login.character_id.to_string(),
         role: String::from(match login.role {
-            r if r == Role::Player as i32 => "Player",
-            r if r == Role::CheatPlayer as i32 => "CheatPlayer",
-            r if r == Role::Admin as i32 => "Admin",
+            r if r == Role::Player as i32 => {
+                _ = ctx.role.set(role::Role::Player(
+                    Account::new(login.account_id, login.character_id)));
+                "Player"
+            },
+            r if r == Role::CheatPlayer as i32 => {
+                _ = ctx.role.set(role::Role::CheatPlayer(
+                    Account::new(login.account_id, login.character_id)));
+                "CheatPlayer"
+            },
+            r if r == Role::Admin as i32 => {
+                _ = ctx.role.set(role::Role::Admin);
+                "Admin"
+            },
             _ => {
                 _ = ctx.close_tx.send(()).await;
+                eprintln!("Invalid role string: {}", login.role);
                 return;
             }
         }),
@@ -72,6 +86,6 @@ async fn handle_login(ctx: Arc<SessionContext>, login: Login) {
         eprintln!("Error validating token: {}", e);
         return;
     }
-    
-    println!("Authenticated!");
+
+    println!("Authenticated: {}", ctx.role.get().unwrap());
 }
