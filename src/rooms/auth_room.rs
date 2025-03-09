@@ -1,7 +1,7 @@
 use crate::core::config::config;
 use crate::core::role::Role;
 use crate::core::room::RoomContext;
-use crate::core::server::ServerContext;
+use crate::core::server::{ServerContext, ServerMessage};
 use crate::core::session::SessionContext;
 use crate::protocol::auth::{AuthProtocol, Login, LoginRole, auth_protocol::Protocol};
 use bytes::Bytes;
@@ -10,7 +10,6 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
-use crate::core::server::ServerMessage::SessionAuthenticated;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -118,5 +117,5 @@ async fn handle_login(
     }
 
     println!("Authenticated: {}", session_ctx.role.get().unwrap());
-    _ = server_ctx.message_tx.send(SessionAuthenticated(session_ctx)).await;
+    _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx)).await;
 }

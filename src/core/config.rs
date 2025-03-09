@@ -11,6 +11,13 @@ pub struct Config {
 
     pub game_listen_port: u16,
     pub admin_listen_port: u16,
+    
+    pub db_host: String,
+    pub db_port: u16,
+    pub db_user: String,
+    pub db_password: String,
+    pub db_name: String,
+    
     pub auth_key: String,
 }
 
@@ -30,8 +37,16 @@ pub fn init() {
     let mut json = serde_json::from_str::<ConfigJson>(&read_from_file(&path)).unwrap();
 
     println!("Initializing config from env variables...");
+    
     let game_listen_port = u16::from_str(env!("SPIRE_GAME_LISTEN_PORT")).unwrap();
     let admin_listen_port = u16::from_str(env!("SPIRE_ADMIN_LISTEN_PORT")).unwrap();
+    
+    let db_host = env!("SPIRE_DB_HOST").to_string();
+    let db_port = u16::from_str(env!("SPIRE_DB_PORT")).unwrap();
+    let db_user = env!("SPIRE_DB_USER").to_string();
+    let db_password = read_from_file(Path::new(env!("SPIRE_DB_PASSWORD_FILE")));
+    let db_name = env!("SPIRE_DB_NAME").to_string();
+    
     let auth_key = read_from_file(Path::new(env!("SPIRE_AUTH_KEY_FILE")));
 
     let config = Config {
@@ -39,6 +54,13 @@ pub fn init() {
 
         game_listen_port,
         admin_listen_port,
+        
+        db_host,
+        db_port,
+        db_user,
+        db_password,
+        db_name,
+        
         auth_key,
     };
 
