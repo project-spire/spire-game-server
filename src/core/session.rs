@@ -5,28 +5,33 @@ use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinSet;
 
 pub type InMessage = (Arc<SessionContext>, Bytes);
-pub type InMessageTx = mpsc::Sender<InMessage>;
-pub type InMessageRx = mpsc::Receiver<InMessage>;
+pub type OutMessage = Bytes;
 
 pub struct SessionContext {
     pub role: OnceLock<Role>,
-    pub send_tx: mpsc::Sender<Bytes>,
-    pub transfer_tx: mpsc::Sender<InMessageTx>,
+    pub in_message_tx: RwLock<mpsc::Sender<InMessage>>,
+    pub out_message_tx: mpsc::Sender<OutMessage>,
     pub close_tx: mpsc::Sender<()>,
 }
 
 impl SessionContext {
     pub fn new(
-        send_tx: mpsc::Sender<Bytes>,
-        transfer_tx: mpsc::Sender<InMessageTx>,
+        in_message_tx: mpsc::Sender<InMessage>,
+        out_message_tx: mpsc::Sender<OutMessage>,
         close_tx: mpsc::Sender<()>,
     ) -> SessionContext {
         let role = OnceLock::new();
-        SessionContext { role, send_tx, transfer_tx, close_tx }
+        let in_message_tx = RwLock::new(in_message_tx);
+        SessionContext {
+            role,
+            in_message_tx,
+            out_message_tx,
+            close_tx,
+        }
     }
 }
 
@@ -37,27 +42,33 @@ enum Recv {
 
 pub async fn run_session(
     stream: TcpStream,
-    recv_tx: InMessageTx,
+    in_message_tx: mpsc::Sender<InMessage>,
     mut shutdown_rx: broadcast::Receiver<()>,
-) {
-    let peer_addr = stream.peer_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
+) -> Arc<SessionContext> {
+    let peer_addr = stream
+        .peer_addr()
+        .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
     let (reader, writer) = tokio::io::split(stream);
-    let (send_tx, send_rx) = mpsc::channel(64);
+
+    let (out_message_tx, in_message_rx) = mpsc::channel(32);
     let (close_tx, mut close_rx) = mpsc::channel(1);
+
+    let ctx = Arc::new(SessionContext::new(in_message_tx, out_message_tx, close_tx));
+    let ctx_recv = ctx.clone();
 
     println!("Session {} has started", peer_addr);
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
-        recv(reader, recv_tx, send_tx, close_tx).await;
+        recv(reader, ctx_recv).await;
     });
     tasks.spawn(async move {
-        send(writer, send_rx).await;
+        send(writer, in_message_rx).await;
     });
 
     tokio::select! {
         _ = tasks.join_next() => {}
-        _ = close_rx.recv() => {}
+        _ = close_rx.recv() => { close_rx.close(); }
         _ = shutdown_rx.recv() => {}
     }
     // Reaching this section means that the session has been shutdown or had errored.
@@ -65,24 +76,19 @@ pub async fn run_session(
     tasks.shutdown().await;
 
     println!("Session {} has ended", peer_addr);
+    ctx
 }
 
-async fn recv(
-    mut reader: ReadHalf<TcpStream>,
-    mut recv_tx: InMessageTx,
-    send_tx: mpsc::Sender<Bytes>,
-    close_tx: mpsc::Sender<()>
-) {
-    let (transfer_tx, mut transfer_rx) = mpsc::channel(1);
-    let ctx = Arc::new(SessionContext::new(send_tx, transfer_tx, close_tx));
-
+async fn recv(mut reader: ReadHalf<TcpStream>, ctx: Arc<SessionContext>) {
     loop {
         match recv_internal(&mut reader).await {
             Ok(Recv::Buf(data)) => {
-                if let Ok(tx) = transfer_rx.try_recv() {
-                    recv_tx = tx;
-                }
-                _ = recv_tx.send((ctx.clone(), data)).await;
+                _ = ctx
+                    .in_message_tx
+                    .read()
+                    .await
+                    .send((ctx.clone(), data))
+                    .await;
             }
             Ok(Recv::EOF) => {
                 break;
@@ -95,7 +101,9 @@ async fn recv(
     }
 }
 
-async fn recv_internal(reader: &mut ReadHalf<TcpStream>) -> Result<Recv, Box<dyn Error + Send + Sync>> {
+async fn recv_internal(
+    reader: &mut ReadHalf<TcpStream>,
+) -> Result<Recv, Box<dyn Error + Send + Sync>> {
     let mut header_buf = [0u8; 2];
     let n = reader.read_exact(&mut header_buf).await?;
     if n == 0 {
@@ -113,14 +121,11 @@ async fn recv_internal(reader: &mut ReadHalf<TcpStream>) -> Result<Recv, Box<dyn
     Ok(Recv::Buf(Bytes::from(body_buf)))
 }
 
-async fn send(
-    mut writer: WriteHalf<TcpStream>,
-    mut send_rx: mpsc::Receiver<Bytes>,
-) {
+async fn send(mut writer: WriteHalf<TcpStream>, mut out_message_rx: mpsc::Receiver<OutMessage>) {
     loop {
-        match send_rx.recv().await {
-            Some(buf) => {
-                if let Err(e) = writer.write_all(buf.iter().as_slice()).await {
+        match out_message_rx.recv().await {
+            Some(data) => {
+                if let Err(e) = writer.write_all(&data[..]).await {
                     eprintln!("Error sending: {}", e);
                     break;
                 }

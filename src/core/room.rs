@@ -1,21 +1,12 @@
-use crate::core::session::InMessageTx;
+use crate::core::session::InMessage;
+use tokio::sync::mpsc;
 
 pub struct RoomContext {
-    pub in_message_tx: InMessageTx
+    pub in_message_tx: mpsc::Sender<InMessage>,
 }
-unsafe impl Send for RoomContext {}
-unsafe impl Sync for RoomContext {}
 
 impl RoomContext {
-    pub fn new(in_message_tx: InMessageTx) -> RoomContext {
+    pub fn new(in_message_tx: mpsc::Sender<InMessage>) -> RoomContext {
         RoomContext { in_message_tx }
-    }
-}
-
-impl Clone for RoomContext {
-    fn clone(&self) -> RoomContext {
-        RoomContext {
-            in_message_tx: self.in_message_tx.clone()
-        }
     }
 }

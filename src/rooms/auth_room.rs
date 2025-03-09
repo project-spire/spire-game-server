@@ -1,15 +1,16 @@
 use crate::core::config::config;
+use crate::core::role::Role;
 use crate::core::room::RoomContext;
-use crate::core::role;
-use crate::core::role::Account;
+use crate::core::server::ServerContext;
 use crate::core::session::SessionContext;
-use crate::protocol::auth::{auth_protocol::Protocol, AuthProtocol, Login, Role};
+use crate::protocol::auth::{AuthProtocol, Login, LoginRole, auth_protocol::Protocol};
 use bytes::Bytes;
-use jsonwebtoken::{encode, Header, Algorithm, EncodingKey};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use serde::{Serialize, Deserialize};
 use tokio::sync::{broadcast, mpsc};
+use crate::core::server::ServerMessage::SessionAuthenticated;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -18,21 +19,29 @@ struct Claims {
     role: String,
 }
 
-pub fn run(mut shutdown_rx: broadcast::Receiver<()>) -> RoomContext {
-    let (in_message_tx, mut in_message_rx) = mpsc::channel(256);
+pub fn run(
+    server_ctx: Arc<ServerContext>,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> Arc<RoomContext> {
+    let (in_message_tx, mut in_message_rx) = mpsc::channel(64);
 
-    let ctx = RoomContext::new(in_message_tx);
+    let ctx = Arc::new(RoomContext::new(in_message_tx));
 
     tokio::spawn(async move {
+        let mut message_buffer = Vec::with_capacity(64);
+
         loop {
             tokio::select! {
-                result = in_message_rx.recv() => match result {
-                    Some((session_ctx, data)) => {
-                        handle(session_ctx, data).await;
+                n = in_message_rx.recv_many(&mut message_buffer, 64) => {
+                    if n == 0 {
+                        break;
                     }
-                    None => { break; }
+
+                    for (session_ctx, data) in message_buffer.drain(0..n) {
+                        handle(&server_ctx, session_ctx, data).await;
+                    }
                 },
-                _ = shutdown_rx.recv() => { break; },
+                _ = shutdown_rx.recv() => break,
             }
         }
     });
@@ -40,52 +49,74 @@ pub fn run(mut shutdown_rx: broadcast::Receiver<()>) -> RoomContext {
     ctx
 }
 
-async fn handle(ctx: Arc<SessionContext>, data: Bytes) {
+async fn handle(
+    server_ctx: &Arc<ServerContext>,
+    session_ctx: Arc<SessionContext>,
+    data: Bytes,
+) {
     let protocol = AuthProtocol::decode(data);
     if let Err(e) = protocol {
         eprintln!("Failed to decode auth protocol: {}", e);
-        _ = ctx.close_tx.send(());
+        _ = session_ctx.close_tx.send(());
         return;
     }
 
     match protocol.unwrap().protocol {
-        Some(Protocol::Login(login)) => { handle_login(ctx, login).await; }
-        None => { _ = ctx.close_tx.send(()); }
+        Some(Protocol::Login(login)) => {
+            handle_login(&server_ctx, session_ctx, login).await;
+        }
+        None => {
+            _ = session_ctx.close_tx.send(());
+        }
     }
 }
 
-async fn handle_login(ctx: Arc<SessionContext>, login: Login) {
+async fn handle_login(
+    server_ctx: &Arc<ServerContext>,
+    session_ctx: Arc<SessionContext>,
+    login: Login,
+) {
     let header = Header::new(Algorithm::HS256);
     let claims = Claims {
         aid: login.account_id.to_string(),
         cid: login.character_id.to_string(),
         role: String::from(match login.role {
-            r if r == Role::Player as i32 => {
-                _ = ctx.role.set(role::Role::Player(
-                    Account::new(login.account_id, login.character_id)));
+            r if r == LoginRole::Player as i32 => {
+                _ = session_ctx.role.set(Role::Player {
+                    account_id: login.account_id,
+                    character_id: login.character_id,
+                });
                 "Player"
-            },
-            r if r == Role::CheatPlayer as i32 => {
-                _ = ctx.role.set(role::Role::CheatPlayer(
-                    Account::new(login.account_id, login.character_id)));
+            }
+            r if r == LoginRole::CheatPlayer as i32 => {
+                _ = session_ctx.role.set(Role::Player {
+                    account_id: login.account_id,
+                    character_id: login.character_id,
+                });
                 "CheatPlayer"
-            },
-            r if r == Role::Admin as i32 => {
-                _ = ctx.role.set(role::Role::Admin);
+            }
+            r if r == LoginRole::Admin as i32 => {
+                _ = session_ctx.role.set(Role::Admin);
                 "Admin"
-            },
+            }
             _ => {
-                _ = ctx.close_tx.send(()).await;
                 eprintln!("Invalid role string: {}", login.role);
+                _ = session_ctx.close_tx.send(()).await;
                 return;
             }
         }),
     };
 
-    if let Err(e) = encode(&header, &claims, &EncodingKey::from_secret(config().auth_key.as_bytes())) {
+    if let Err(e) = encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret(config().auth_key.as_bytes()),
+    ) {
         eprintln!("Error validating token: {}", e);
+        _ = session_ctx.close_tx.send(()).await;
         return;
     }
 
-    println!("Authenticated: {}", ctx.role.get().unwrap());
+    println!("Authenticated: {}", session_ctx.role.get().unwrap());
+    _ = server_ctx.message_tx.send(SessionAuthenticated(session_ctx)).await;
 }
