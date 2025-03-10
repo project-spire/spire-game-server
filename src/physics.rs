@@ -1,2 +1,2 @@
-pub mod transform;
-mod collision;
+pub mod collision;
+pub mod object;
