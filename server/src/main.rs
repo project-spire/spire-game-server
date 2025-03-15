@@ -3,7 +3,6 @@ use crate::core::config;
 mod character;
 mod core;
 mod physics;
-mod protocol;
 mod rooms;
 
 #[tokio::main]

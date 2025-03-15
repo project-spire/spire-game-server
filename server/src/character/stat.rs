@@ -1,14 +1,14 @@
 use bevy_ecs::prelude::*;
 
 #[derive(Component)]
-pub struct Attributes {
-    // Core attributes
+pub struct Abilities {
+    // Core stats
     strength: u16,
     dexterity: u16,
     constitution: u16,
     intelligence: u16,
 
-    // Optional attributes
+    // Optional stats
     faith: Option<u16>,
 }
 

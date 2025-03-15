@@ -3,7 +3,7 @@ use crate::core::role::Role;
 use crate::core::room::RoomContext;
 use crate::core::server::{ServerContext, ServerMessage};
 use crate::core::session::SessionContext;
-use crate::protocol::auth::{AuthProtocol, Login, LoginRole, auth_protocol::Protocol};
+use protocol::auth::{AuthProtocol, Login, LoginRole, auth_protocol::Protocol};
 use bytes::Bytes;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use prost::Message;

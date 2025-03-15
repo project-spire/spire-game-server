@@ -1,5 +1,9 @@
 [workspace]
 members = [
     "console",
-    "server"
+    "protocol/rs",
+    "server",
 ]
+
+[workspace.dependencies]
+prost = "0.13"

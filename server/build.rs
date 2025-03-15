@@ -1,6 +1,5 @@
 use std::fs;
-use glob::glob;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = std::env::var("OUT_DIR")?;
@@ -8,13 +7,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Copy `config.json`
     println!("cargo:rerun-if-changed=config.json");
     fs::copy("../config.json", Path::new(&out_dir).join("config.json"))?;
-
-    // Compile protocols
-    println!("cargo:rerun-if-changed=../protocol/");
-    let proto_files: Vec<PathBuf> = glob("../protocol/**/*.proto")?
-        .filter_map(Result::ok)
-        .collect();
-    prost_build::compile_protos(&proto_files, &["../protocol/"])?;
 
     Ok(())
 }
