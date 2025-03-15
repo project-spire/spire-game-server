@@ -1,6 +1,6 @@
 use crate::physics::collision::CollisionShape;
 use bevy_ecs::component::Component;
-use nalgebra_glm::Vec2;
+use nalgebra::{ Point2, Vector2 };
 
 pub struct PhysicsMaterial {
     pub absorbent: bool,
@@ -18,33 +18,33 @@ impl PhysicsMaterial {
             rough
         }
     }
-
-    pub fn set_bounce(&mut self, bounce: f32) {
-        self.bounce = bounce.clamp(0.0, 1.0);
-    }
-
-    pub fn set_friction(&mut self, friction: f32) {
-        self.friction = friction.clamp(0.0, 1.0);
-    }
 }
 
 #[derive(Component)]
 pub struct TriggerBody {
-    pub position: Vec2,
+    pub position: Point2<f32>,
     pub shape: CollisionShape,
 }
 
 #[derive(Component)]
 pub struct StaticBody {
-    pub position: Vec2,
+    pub position: Point2<f32>,
+    pub shape: CollisionShape,
+    pub material: Option<PhysicsMaterial>,
+}
+
+#[derive(Component)]
+pub struct KinematicBody {
+    pub position: Point2<f32>,
     pub shape: CollisionShape,
     pub material: Option<PhysicsMaterial>,
 }
 
 #[derive(Component)]
 pub struct DynamicBody {
-    pub position: Vec2,
-    pub velocity: Vec2,
+    pub position: Point2<f32>,
+    pub velocity: Vector2<f32>,
     pub shape: CollisionShape,
     pub material: Option<PhysicsMaterial>,
 }
+

@@ -1,9 +1,9 @@
 use bevy_ecs::prelude::*;
-use nalgebra_glm::Vec2;
+use nalgebra::{distance, Point2, Vector2};
+use crate::physics::object::*;
 
 pub enum CollisionShape {
-    Dot { v: Vec2 },
-    Rectangle { x: f32, y: f32 },
+    Rectangle { w: f32, h: f32 },
     Circle { radius: f32 },
 }
 
@@ -13,10 +13,42 @@ pub struct Collision {
     pub b: Entity,
 }
 
-pub fn is_colliding(a: &CollisionShape, b: &CollisionShape) -> bool {
-    use CollisionShape::*;
+pub fn dotcast(dot: Point2<f32>, p: Point2<f32>, c: &CollisionShape) -> bool {
+    match c {
+        CollisionShape::Rectangle { w, h } => {
+            p.x - w <= dot.x && dot.x <= p.x + w &&
+            p.y - h <= dot.y && dot.y <= p.y + h
+        }
+        CollisionShape::Circle { radius } => {
+            distance(&dot, &p) <= *radius
+        }
+    }
+}
 
-    // match (a, b) {
-    //     (Dot { v: va }, Dot { v: vb }) => va == vb,
-    // }
+pub fn raycast(
+    p: Point2<f32>,
+    v: Vector2<f32>,
+    static_bodies: Query<&StaticBody>,
+    kinematic_bodies: Query<&KinematicBody>,
+) -> Option<Entity> {
+    None
+}
+
+pub fn raycast_many(
+    p: Point2<f32>,
+    v: Vector2<f32>,
+    static_bodies: Query<&StaticBody>,
+    kinematic_bodies: Query<&KinematicBody>,
+) -> Vec<Entity> {
+    let mut result: Vec<Entity> = Vec::new();
+    
+    static_bodies.iter().for_each(|body| {
+        
+    });
+    
+    kinematic_bodies.iter().for_each(|body| {
+        
+    });
+    
+    result
 }
