@@ -1,5 +1,6 @@
 use crate::core::config;
 
+mod character;
 mod core;
 mod physics;
 mod protocol;
