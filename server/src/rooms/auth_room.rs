@@ -3,7 +3,10 @@ use crate::core::role::Role;
 use crate::core::room::RoomContext;
 use crate::core::server::{ServerContext, ServerMessage};
 use crate::core::session::SessionContext;
-use protocol::auth::{AuthProtocol, Login, LoginRole, auth_protocol::Protocol};
+use protocol::{
+    Protocol,
+    auth::{AuthProtocol, Login, LoginRole, auth_protocol}
+};
 use bytes::Bytes;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use prost::Message;
@@ -36,7 +39,12 @@ pub fn run(
                         break;
                     }
 
-                    for (session_ctx, data) in message_buffer.drain(0..n) {
+                    for (session_ctx, protocol, data) in message_buffer.drain(0..n) {
+                        if protocol != Protocol::Auth {
+                            eprintln!("Protocol not auth: {:?}", protocol);
+                            continue;
+                        }
+
                         handle(&server_ctx, session_ctx, data).await;
                     }
                 },
@@ -61,7 +69,7 @@ async fn handle(
     }
 
     match protocol.unwrap().protocol {
-        Some(Protocol::Login(login)) => {
+        Some(auth_protocol::Protocol::Login(login)) => {
             handle_login(&server_ctx, session_ctx, login).await;
         }
         None => {

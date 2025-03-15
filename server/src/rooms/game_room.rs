@@ -42,5 +42,5 @@ fn update(world: &mut World, dt: Duration) {
 }
 
 fn handle(message: InMessage) {
-    let (session_ctx, data) = message;
+    let (session_ctx, protocol, data) = message;
 }

@@ -1,5 +1,6 @@
 use crate::core::role::Role;
 use bytes::Bytes;
+use protocol::{Protocol, read_header};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
@@ -8,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinSet;
 
-pub type InMessage = (Arc<SessionContext>, Bytes);
+pub type InMessage = (Arc<SessionContext>, Protocol, Bytes);
 pub type OutMessage = Bytes;
 
 pub struct SessionContext {
@@ -36,8 +37,9 @@ impl SessionContext {
 }
 
 enum Recv {
-    Buf(Bytes),
+    Message(Protocol, Bytes),
     EOF,
+    InvalidHeader,
 }
 
 pub async fn run_session(
@@ -82,15 +84,19 @@ pub async fn run_session(
 async fn recv(mut reader: ReadHalf<TcpStream>, ctx: Arc<SessionContext>) {
     loop {
         match recv_internal(&mut reader).await {
-            Ok(Recv::Buf(data)) => {
+            Ok(Recv::Message(protocol, data)) => {
                 _ = ctx
                     .in_message_tx
                     .read()
                     .await
-                    .send((ctx.clone(), data))
+                    .send((ctx.clone(), protocol, data))
                     .await;
             }
             Ok(Recv::EOF) => {
+                break;
+            }
+            Ok(Recv::InvalidHeader) => {
+                eprintln!("Invalid header received");
                 break;
             }
             Err(e) => {
@@ -104,21 +110,25 @@ async fn recv(mut reader: ReadHalf<TcpStream>, ctx: Arc<SessionContext>) {
 async fn recv_internal(
     reader: &mut ReadHalf<TcpStream>,
 ) -> Result<Recv, Box<dyn Error + Send + Sync>> {
-    let mut header_buf = [0u8; 2];
+    let mut header_buf = [0u8; 4];
     let n = reader.read_exact(&mut header_buf).await?;
     if n == 0 {
         return Ok(Recv::EOF);
     }
 
-    let body_len = u16::from_be_bytes(header_buf) as usize;
-    let mut body_buf = vec![0u8; body_len];
+    let (protocol, body_len) = read_header(&header_buf);
+    if protocol == Protocol::None {
+        return Ok(Recv::InvalidHeader);
+    }
+
+    let mut body_buf = vec![0u8; body_len as usize];
 
     let n = reader.read_exact(&mut body_buf).await?;
     if n == 0 {
         return Ok(Recv::EOF);
     }
 
-    Ok(Recv::Buf(Bytes::from(body_buf)))
+    Ok(Recv::Message(protocol, Bytes::from(body_buf)))
 }
 
 async fn send(mut writer: WriteHalf<TcpStream>, mut out_message_rx: mpsc::Receiver<OutMessage>) {
