@@ -125,5 +125,10 @@ async fn handle_login(
     }
 
     println!("Authenticated: {}", session_ctx.role.get().unwrap());
-    _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx)).await;
+    
+    tokio::spawn(async move {
+        //TODO: 
+        
+        _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx)).await;
+    });
 }
