@@ -29,7 +29,7 @@ pub async fn run(
                 }
 
                 for message in in_message_buffer.drain(0..n) {
-                    handle_in_message(message);
+                    handle_in_message(&mut world, message);
                 }
             },
             n = room_message_rx.recv_many(&mut room_message_buffer, 16) => {
@@ -38,7 +38,7 @@ pub async fn run(
                 }
 
                 for message in room_message_buffer.drain(0..n) {
-                    handle_room_message(message);
+                    handle_room_message(&mut world, message);
                 }
             },
             _ = shutdown_rx.recv() => break,
@@ -63,10 +63,10 @@ fn update(world: &mut World) {
     schedule.run(world);
 }
 
-fn handle_in_message(message: InMessage) {
+fn handle_in_message(world: &mut World, message: InMessage) {
     let (session_ctx, protocol, data) = message;
 }
 
-fn handle_room_message(message: RoomMessage) {
+fn handle_room_message(world: &mut World, message: RoomMessage) {
     
 }

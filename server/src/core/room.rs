@@ -2,7 +2,7 @@ use crate::core::session::InMessage;
 use tokio::sync::mpsc;
 
 pub enum RoomMessage {
-    
+    RoomTransferStart {}
 }
 
 pub struct RoomContext {

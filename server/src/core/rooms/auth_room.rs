@@ -1,13 +1,11 @@
+use bytes::Bytes;
 use crate::core::config::config;
-use crate::core::role::Role;
 use crate::core::room::RoomContext;
 use crate::core::server::{ServerContext, ServerMessage};
-use crate::core::session::SessionContext;
+use crate::core::session::{Account, Privilege, SessionContext};
 use crate::protocol::*;
 use crate::protocol::auth::*;
-use bytes::Bytes;
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-use prost::Message;
+use jsonwebtoken::{Algorithm, Validation, DecodingKey, decode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -16,7 +14,7 @@ use tokio::sync::{broadcast, mpsc};
 struct Claims {
     aid: String, // account_id
     cid: String, // character_id
-    role: String,
+    prv: String, // privilege
 }
 
 pub fn run(
@@ -81,47 +79,43 @@ async fn handle_login(
     session_ctx: Arc<SessionContext>,
     login: Login,
 ) {
-    let header = Header::new(Algorithm::HS256);
-    let claims = Claims {
-        aid: login.account_id.to_string(),
-        cid: login.character_id.to_string(),
-        role: String::from(match login.role {
-            r if r == LoginRole::Player as i32 => {
-                _ = session_ctx.role.set(Role::Player {
-                    account_id: login.account_id,
-                    character_id: login.character_id,
-                });
-                "Player"
-            }
-            r if r == LoginRole::CheatPlayer as i32 => {
-                _ = session_ctx.role.set(Role::Player {
-                    account_id: login.account_id,
-                    character_id: login.character_id,
-                });
-                "CheatPlayer"
-            }
-            r if r == LoginRole::Admin as i32 => {
-                _ = session_ctx.role.set(Role::Admin);
-                "Admin"
-            }
-            _ => {
-                eprintln!("Invalid role string: {}", login.role);
-                _ = session_ctx.close_tx.send(()).await;
-                return;
-            }
-        }),
-    };
-
-    if let Err(e) = encode(
-        &header,
-        &claims,
-        &EncodingKey::from_secret(config().auth_key.as_bytes()),
-    ) {
+    let token_data = decode::<Claims>(
+        &login.token,
+        &DecodingKey::from_secret(config().auth_key.as_bytes()),
+        &Validation::new(Algorithm::HS256),
+    );
+    if let Err(e) = token_data {
         eprintln!("Error validating token: {}", e);
         _ = session_ctx.close_tx.send(()).await;
         return;
     }
 
-    println!("Authenticated: {}", session_ctx.role.get().unwrap());
+    let claims = token_data.unwrap().claims;
+    let account_id = match claims.aid.parse() {
+        Ok(id) => id,
+        _ => {
+            eprintln!("Invalid account id: {}", claims.aid);
+            return;
+        }
+    };
+    let character_id = match claims.cid.parse() {
+        Ok(id) => id,
+        _ => {
+            eprintln!("Invalid character id: {}", claims.cid);
+            return;
+        }
+    };
+    let privilege = match claims.prv.as_str() {
+        "None" => Privilege::None,
+        "Manager" => Privilege::Manager,
+        _ => {
+            eprintln!("Invalid privilege: {}", claims.prv);
+            return;
+        }
+    };
+
+    _ = session_ctx.account.set(Account{ account_id, character_id, privilege });
+
+    println!("Authenticated: {:?}", session_ctx.account());
     _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx)).await;
 }

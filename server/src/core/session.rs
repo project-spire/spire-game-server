@@ -1,6 +1,5 @@
-use crate::core::role::Role;
-use crate::protocol::{ProtocolCategory, read_header};
 use bytes::Bytes;
+use crate::protocol::{ProtocolCategory, read_header};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
@@ -12,8 +11,21 @@ use tokio::task::JoinSet;
 pub type InMessage = (Arc<SessionContext>, ProtocolCategory, Bytes);
 pub type OutMessage = Bytes;
 
+#[derive(Debug)]
+pub enum Privilege {
+    None,
+    Manager,
+}
+
+#[derive(Debug)]
+pub struct Account {
+    pub account_id: u64,
+    pub character_id: u64,
+    pub privilege: Privilege,
+}
+
 pub struct SessionContext {
-    pub role: OnceLock<Role>,
+    pub account: OnceLock<Account>,
     pub in_message_tx: RwLock<mpsc::Sender<InMessage>>,
     pub out_message_tx: mpsc::Sender<OutMessage>,
     pub close_tx: mpsc::Sender<()>,
@@ -25,15 +37,17 @@ impl SessionContext {
         out_message_tx: mpsc::Sender<OutMessage>,
         close_tx: mpsc::Sender<()>,
     ) -> SessionContext {
-        let role = OnceLock::new();
+        let account = OnceLock::new();
         let in_message_tx = RwLock::new(in_message_tx);
         SessionContext {
-            role,
+            account,
             in_message_tx,
             out_message_tx,
             close_tx,
         }
     }
+
+    pub fn account(&self) -> &Account { self.account.get().unwrap() }
 }
 
 enum Recv {
@@ -76,6 +90,7 @@ pub async fn run_session(
     // Reaching this section means that the session has been shutdown or had errored.
     // So abort the tasks.
     tasks.shutdown().await;
+    close_rx.close();
 
     println!("Session {} has ended", peer_addr);
     ctx
@@ -121,8 +136,7 @@ async fn recv_internal(
         return Ok(Recv::InvalidHeader);
     }
 
-    let mut body_buf = vec![0u8; body_len as usize];
-
+    let mut body_buf = Vec::with_capacity(body_len as usize);
     let n = reader.read_exact(&mut body_buf).await?;
     if n == 0 {
         return Ok(Recv::EOF);
