@@ -1,6 +1,6 @@
 use crate::core::role::Role;
+use crate::protocol::{ProtocolCategory, read_header};
 use bytes::Bytes;
-use protocol::{Protocol, read_header};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinSet;
 
-pub type InMessage = (Arc<SessionContext>, Protocol, Bytes);
+pub type InMessage = (Arc<SessionContext>, ProtocolCategory, Bytes);
 pub type OutMessage = Bytes;
 
 pub struct SessionContext {
@@ -37,7 +37,7 @@ impl SessionContext {
 }
 
 enum Recv {
-    Message(Protocol, Bytes),
+    Message(ProtocolCategory, Bytes),
     EOF,
     InvalidHeader,
 }
@@ -117,7 +117,7 @@ async fn recv_internal(
     }
 
     let (protocol, body_len) = read_header(&header_buf);
-    if protocol == Protocol::None {
+    if protocol == ProtocolCategory::None {
         return Ok(Recv::InvalidHeader);
     }
 

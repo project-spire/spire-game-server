@@ -1,6 +1,6 @@
 use crate::physics::collision::CollisionShape;
 use bevy_ecs::component::Component;
-use nalgebra::{Point2, UnitVector2};
+use nalgebra::{Point2, UnitVector2, Vector2};
 use std::ops::{Deref, DerefMut};
 
 #[derive(Component)]
@@ -18,6 +18,7 @@ impl DerefMut for Position {
 pub struct Transform {
     pub position: Point2<f32>,
     pub rotation: UnitVector2<f32>,
+    pub velocity: Vector2<f32>,
 }
 
 #[derive(Component)]

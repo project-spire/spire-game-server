@@ -6,4 +6,5 @@ members = [
 ]
 
 [workspace.dependencies]
+nalgebra = "0.33"
 prost = "0.13"

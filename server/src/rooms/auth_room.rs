@@ -3,10 +3,8 @@ use crate::core::role::Role;
 use crate::core::room::RoomContext;
 use crate::core::server::{ServerContext, ServerMessage};
 use crate::core::session::SessionContext;
-use protocol::{
-    Protocol,
-    auth::{AuthProtocol, Login, LoginRole, auth_protocol}
-};
+use crate::protocol::*;
+use crate::protocol::auth::*;
 use bytes::Bytes;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use prost::Message;
@@ -40,7 +38,7 @@ pub fn run(
                     }
 
                     for (session_ctx, protocol, data) in message_buffer.drain(0..n) {
-                        if protocol != Protocol::Auth {
+                        if protocol != ProtocolCategory::Auth {
                             eprintln!("Protocol not auth: {:?}", protocol);
                             continue;
                         }
@@ -125,10 +123,5 @@ async fn handle_login(
     }
 
     println!("Authenticated: {}", session_ctx.role.get().unwrap());
-    
-    tokio::spawn(async move {
-        //TODO: 
-        
-        _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx)).await;
-    });
+    _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx)).await;
 }

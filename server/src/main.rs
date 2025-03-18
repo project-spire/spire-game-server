@@ -1,10 +1,12 @@
-use crate::core::config;
-
 mod character;
 mod core;
 mod physics;
 mod rooms;
 mod world;
+
+use protocol;
+
+use crate::core::config;
 
 #[tokio::main]
 async fn main() {

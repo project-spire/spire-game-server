@@ -1,30 +1,43 @@
 use bevy_ecs::prelude::*;
+use crate::character::stat::MobilityStats;
 use crate::character::status::Status;
 use crate::physics::object::Transform;
+use crate::protocol::*;
+use crate::protocol::game::*;
 use crate::world::time::WorldTime;
-use nalgebra::{Point2, UnitVector2};
+use nalgebra::{Point2, UnitVector2, Vector2};
 
 use crate::character::movement::MovementState::*;
 use crate::character::movement::MovementMode::*;
+use crate::character::movement::MovementInterpolation::*;
 use crate::character::movement::MovementCommand::*;
 
 type Transition = (MovementState, std::time::Instant);
 
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone, Default)]
 pub enum MovementState {
-    Idle,
-    Walking,
-    Running,
-    Rolling
+    #[default]
+    Idle = 0,
+    Walking = 1,
+    Running = 2,
+    Rolling = 3,
+}
+
+#[derive(Eq, PartialEq, Copy, Clone, Default)]
+pub enum MovementMode {
+    #[default]
+    Standing = 0,
+    Crouching = 1,
+    Crawling = 2,
+    Swimming = 3,
+    Flying = 4,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
-pub enum MovementMode {
-    Standing,
-    Crouching,
-    Crawling,
-    Swimming,
-    Flying,
+pub enum MovementInterpolation {
+    None = 0,
+    Linear = 1,
+    DeadReckoning = 2,
 }
 
 pub enum MovementCommand {
@@ -45,32 +58,35 @@ pub enum MovementCommand {
     Teleport { position: Point2<f32>, forced: bool },
 }
 
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct MovementController {
     state: MovementState,
     mode: MovementMode,
     commands: Vec<MovementCommand>,
     transition: Option<Transition>,
-
-    speed: f32,
-    base_speed: f32,
+    interpolation: Option<MovementInterpolation>,
 }
 
 pub fn update(
-    mut controllers: Query<(&mut MovementController, &mut Transform, Option<&Status>)>,
+    mut query: Query<(
+        &mut MovementController,
+        &mut Transform,
+        &MobilityStats,
+        Option<&Status>)>,
     time: Res<WorldTime>,
 ) {
-    controllers.iter_mut().for_each(|(mut controller, mut transform, status)| {
+    query.iter_mut().for_each(
+        |(mut controller, mut transform, mobility, status)| {
         if let Some(transition) = controller.transition.take() {
             handle_transition(transition, &mut controller, &time);
         }
 
         let commands: Vec<_> = controller.commands.drain(..).collect();
         for command in commands {
-            handle_command(command, &mut controller, &mut transform, status, &time);
+            handle_command(command, &mut controller, &mut transform, status);
         }
 
-        handle_movement(&controller, &mut transform, &time);
+        handle_movement(&controller, &mut transform, &mobility, &time);
     })
 }
 
@@ -94,7 +110,6 @@ fn handle_command(
     controller: &mut MovementController,
     transform: &mut Transform,
     status: Option<&Status>,
-    time: &Res<WorldTime>,
 ) {
     match command {
         Halt => if controller.state == Walking || controller.state == Running {
@@ -137,6 +152,8 @@ fn handle_command(
             controller.mode = Flying;
         }
         Teleport { position, forced } => {
+            controller.interpolation = Some(None); // Don't interpolate the teleportation
+
             if forced {
                 //TODO: Check if movable to the position
                 transform.position = position;
@@ -152,6 +169,7 @@ fn handle_command(
 fn handle_movement(
     controller: &MovementController,
     transform: &mut Transform,
+    mobility: &MobilityStats,
     time: &Res<WorldTime>,
 ) {
     //TODO: Extract to config?
@@ -163,6 +181,7 @@ fn handle_movement(
     const CRAWL_MULTIPLIER: f32 = 0.3;
 
     if controller.state == Idle {
+        transform.velocity = Vector2::<f32>::zeros();
         return;
     }
 
@@ -171,11 +190,11 @@ fn handle_movement(
         return;
     }
 
-    let mut speed = controller.speed;
+    let mut speed = mobility.speed;
     speed *= match controller.state {
         Walking => WALK_MULTIPLIER,
         Running => RUN_MULTIPLIER,
-        _ => panic!(),
+        _ => 1.0,
     };
     speed *= match controller.mode {
         Standing => STAND_MULTIPLIER,
@@ -184,6 +203,45 @@ fn handle_movement(
         _ => 1.0,
     };
 
-    let vector = speed * (time.dt.as_millis() as f32) * (*transform.rotation);
-    transform.position += vector;
+    let velocity = speed * (time.dt.as_millis() as f32) * (*transform.rotation);
+    transform.position += velocity;
+    transform.velocity = velocity;
+}
+
+//TODO: Add session as component?
+pub fn sync(
+    mut query: Query<(Entity, &mut MovementController, &Transform), Changed<MovementController>>,
+) {
+    //TODO: initialize Vec with query size
+    let mut list = Vec::new();
+
+    query.iter_mut().for_each(|(entity, mut controller, transform)| {
+        let interpolation = if let Some(interpolation) = controller.interpolation.take() {
+            interpolation
+        } else {
+            // Default interpolation is linear
+            Linear
+        };
+
+        let sync = MovementSync {
+            entity: entity.to_bits(),
+            state: controller.state as i32,
+            mode: controller.mode as i32,
+            interpolation: interpolation as i32,
+            position: Some(transform.position.into()),
+            velocity: Some(transform.velocity.into()),
+        };
+        list.push(sync);
+    });
+
+    let protocol = GameProtocol {
+        protocol: Some(game_protocol::Protocol::MovementSyncList(MovementSyncList { list }))
+    };
+    let buf = serialize(ProtocolCategory::Game, &protocol);
+    if let Err(e) = buf {
+        //TODO: Log
+        return;
+    }
+
+    //TODO: How to broadcast?
 }

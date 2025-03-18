@@ -21,14 +21,14 @@ pub struct PlayerStats {
 
 #[derive(Component)]
 pub struct MobilityStats {
+    pub speed: f32,
     base_speed: f32,
-    speed: f32,
 }
 
 #[derive(Component)]
 pub struct CombatStats {
+    pub attack: u32,
     base_attack: u32,
-    attack: u32,
 }
 
 #[derive(Component)]

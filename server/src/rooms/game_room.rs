@@ -1,32 +1,44 @@
 use bevy_ecs::prelude::*;
-use tokio::sync::{broadcast, mpsc};
-use tokio::time::{self, Duration, Instant};
+use crate::character;
+use crate::core::room::RoomMessage;
 use crate::core::session::InMessage;
+use crate::world::time::WorldTime;
+use tokio::sync::{broadcast, mpsc};
+use tokio::time::{self, Duration};
 
 pub async fn run(
     mut in_message_rx: mpsc::Receiver<InMessage>,
+    mut room_message_rx: mpsc::Receiver<RoomMessage>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
+    let mut in_message_buffer = Vec::with_capacity(64);
+    let mut room_message_buffer =  Vec::with_capacity(16);
+    let mut update_interval = time::interval(Duration::from_millis(100));
+    
     let mut world = World::default();
-    let mut interval = time::interval(Duration::from_millis(100));
-    let mut last_tick = Instant::now();;
-
-    let mut message_buffer = Vec::with_capacity(64);
+    world.insert_resource(WorldTime::default());
 
     loop {
         tokio::select! {
-            _ = interval.tick() => {
-                let now = Instant::now();
-                update(&mut world, now - last_tick);
-                last_tick = now;
+            _ = update_interval.tick() => {
+                update(&mut world);
             },
-            n = in_message_rx.recv_many(&mut message_buffer, 64) => {
+            n = in_message_rx.recv_many(&mut in_message_buffer, 64) => {
                 if n == 0 {
                     break;
                 }
 
-                for message in message_buffer.drain(0..n) {
-                    handle(message);
+                for message in in_message_buffer.drain(0..n) {
+                    handle_in_message(message);
+                }
+            },
+            n = room_message_rx.recv_many(&mut room_message_buffer, 16) => {
+                if n == 0 {
+                    break;
+                }
+
+                for message in room_message_buffer.drain(0..n) {
+                    handle_room_message(message);
                 }
             },
             _ = shutdown_rx.recv() => break,
@@ -34,13 +46,27 @@ pub async fn run(
     }
 }
 
-fn update(world: &mut World, dt: Duration) {
-    println!("Room update; dt={}", dt.as_secs());
-    // let mut schedule = Schedule::new();
-    //TODO: Add systems
-    // schedule.run(world);
+fn update(world: &mut World) {
+    let mut time = world.get_resource_mut::<WorldTime>().unwrap();
+    let now = std::time::Instant::now();
+    let dt = now - time.now;
+
+    time.now = now;
+    time.dt = dt;
+
+    let mut schedule = Schedule::default();
+    schedule.add_systems((
+        character::movement::update,
+        character::movement::sync,
+    ));
+
+    schedule.run(world);
 }
 
-fn handle(message: InMessage) {
+fn handle_in_message(message: InMessage) {
     let (session_ctx, protocol, data) = message;
+}
+
+fn handle_room_message(message: RoomMessage) {
+    
 }
