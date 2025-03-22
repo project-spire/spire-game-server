@@ -1,8 +1,9 @@
 use bytes::Bytes;
+use crate::character::player::{Account, Privilege};
 use crate::core::config::config;
 use crate::core::room::RoomContext;
 use crate::core::server::{ServerContext, ServerMessage};
-use crate::core::session::{Account, Privilege, SessionContext};
+use crate::core::session::SessionContext;
 use crate::protocol::*;
 use crate::protocol::auth::*;
 use jsonwebtoken::{Algorithm, Validation, DecodingKey, decode};
@@ -114,8 +115,6 @@ async fn handle_login(
         }
     };
 
-    _ = session_ctx.account.set(Account{ account_id, character_id, privilege });
-
-    println!("Authenticated: {:?}", session_ctx.account());
+    println!("Authenticated: {:?}", session_ctx);
     _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx)).await;
 }

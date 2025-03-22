@@ -1,8 +1,11 @@
 use bytes::Bytes;
 use crate::protocol::{ProtocolCategory, read_header};
 use std::error::Error;
+use std::fmt;
+use std::fmt::Formatter;
 use std::net::SocketAddr;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+use bevy_ecs::component::Component;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, broadcast, mpsc};
@@ -11,21 +14,15 @@ use tokio::task::JoinSet;
 pub type InMessage = (Arc<SessionContext>, ProtocolCategory, Bytes);
 pub type OutMessage = Bytes;
 
-#[derive(Debug)]
-pub enum Privilege {
-    None,
-    Manager,
-}
-
-#[derive(Debug)]
-pub struct Account {
-    pub account_id: u64,
-    pub character_id: u64,
-    pub privilege: Privilege,
+#[derive(Component)]
+pub struct Session {
+    pub ctx: Arc<SessionContext>,
 }
 
 pub struct SessionContext {
-    pub account: OnceLock<Account>,
+    pub is_open: bool,
+    pub peer_addr: SocketAddr,
+
     pub in_message_tx: RwLock<mpsc::Sender<InMessage>>,
     pub out_message_tx: mpsc::Sender<OutMessage>,
     pub close_tx: mpsc::Sender<()>,
@@ -33,21 +30,26 @@ pub struct SessionContext {
 
 impl SessionContext {
     pub fn new(
+        peer_addr: SocketAddr,
         in_message_tx: mpsc::Sender<InMessage>,
         out_message_tx: mpsc::Sender<OutMessage>,
         close_tx: mpsc::Sender<()>,
     ) -> SessionContext {
-        let account = OnceLock::new();
         let in_message_tx = RwLock::new(in_message_tx);
         SessionContext {
-            account,
+            is_open: true,
+            peer_addr,
             in_message_tx,
             out_message_tx,
             close_tx,
         }
     }
+}
 
-    pub fn account(&self) -> &Account { self.account.get().unwrap() }
+impl fmt::Display for SessionContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Session({})", self.peer_addr)
+    }
 }
 
 enum Recv {
@@ -69,10 +71,10 @@ pub async fn run_session(
     let (out_message_tx, in_message_rx) = mpsc::channel(32);
     let (close_tx, mut close_rx) = mpsc::channel(1);
 
-    let ctx = Arc::new(SessionContext::new(in_message_tx, out_message_tx, close_tx));
+    let ctx = Arc::new(SessionContext::new(peer_addr, in_message_tx, out_message_tx, close_tx));
     let ctx_recv = ctx.clone();
 
-    println!("Session {} has started", peer_addr);
+    println!("{} has started", ctx);
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
@@ -92,7 +94,7 @@ pub async fn run_session(
     tasks.shutdown().await;
     close_rx.close();
 
-    println!("Session {} has ended", peer_addr);
+    println!("{} has ended", ctx);
     ctx
 }
 
