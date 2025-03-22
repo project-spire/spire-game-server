@@ -1,11 +1,10 @@
-use bytes::Bytes;
 use crate::character::player::{Account, Privilege};
 use crate::core::config::config;
-use crate::core::room::RoomContext;
+use crate::core::room::{handle_room_message, RoomContext};
 use crate::core::server::{ServerContext, ServerMessage};
-use crate::core::session::SessionContext;
+use crate::core::session::{InMessage, SessionContext};
 use crate::protocol::*;
-use crate::protocol::auth::*;
+use crate::protocol::auth::{*, auth_protocol::Protocol};
 use jsonwebtoken::{Algorithm, Validation, DecodingKey, decode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -22,27 +21,34 @@ pub fn run(
     server_ctx: Arc<ServerContext>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Arc<RoomContext> {
+    let (room_message_tx, mut room_message_rx) = mpsc::channel(16);
     let (in_message_tx, mut in_message_rx) = mpsc::channel(64);
 
-    let ctx = Arc::new(RoomContext::new(in_message_tx));
+    let ctx = Arc::new(RoomContext::new(room_message_tx, in_message_tx));
+    let ctx_handle = ctx.clone();
 
     tokio::spawn(async move {
-        let mut message_buffer = Vec::with_capacity(64);
+        let mut room_message_buffer = Vec::with_capacity(16);
+        let mut in_message_buffer = Vec::with_capacity(64);
 
         loop {
             tokio::select! {
-                n = in_message_rx.recv_many(&mut message_buffer, 64) => {
+                n = in_message_rx.recv_many(&mut in_message_buffer, 64) => {
                     if n == 0 {
                         break;
                     }
 
-                    for (session_ctx, protocol, data) in message_buffer.drain(0..n) {
-                        if protocol != ProtocolCategory::Auth {
-                            eprintln!("Protocol not auth: {:?}", protocol);
-                            continue;
-                        }
+                    for in_message in in_message_buffer.drain(0..n) {
+                        handle_in_message(&server_ctx, in_message).await;
+                    }
+                },
+                n = room_message_rx.recv_many(&mut room_message_buffer, 16) => {
+                    if n == 0 {
+                        break;
+                    }
 
-                        handle(&server_ctx, session_ctx, data).await;
+                    for room_message in room_message_buffer.drain(0..n) {
+                        handle_room_message(&ctx_handle, room_message).await;
                     }
                 },
                 _ = shutdown_rx.recv() => break,
@@ -53,11 +59,14 @@ pub fn run(
     ctx
 }
 
-async fn handle(
-    server_ctx: &Arc<ServerContext>,
-    session_ctx: Arc<SessionContext>,
-    data: Bytes,
-) {
+async fn handle_in_message(server_ctx: &Arc<ServerContext>, message: InMessage) {
+    let (session_ctx, category, data) = message;
+    if category != ProtocolCategory::Auth {
+        eprintln!("Protocol category not auth: {:?}", category);
+        _ = session_ctx.close_tx.send(());
+        return;
+    }
+
     let protocol = AuthProtocol::decode(data);
     if let Err(e) = protocol {
         eprintln!("Failed to decode auth protocol: {}", e);
@@ -66,7 +75,7 @@ async fn handle(
     }
 
     match protocol.unwrap().protocol {
-        Some(auth_protocol::Protocol::Login(login)) => {
+        Some(Protocol::Login(login)) => {
             handle_login(&server_ctx, session_ctx, login).await;
         }
         None => {
@@ -86,23 +95,25 @@ async fn handle_login(
         &Validation::new(Algorithm::HS256),
     );
     if let Err(e) = token_data {
-        eprintln!("Error validating token: {}", e);
-        _ = session_ctx.close_tx.send(()).await;
+        eprintln!("Error decoding token({}): {}", &login.token, e);
+        session_ctx.close().await;
         return;
     }
 
     let claims = token_data.unwrap().claims;
-    let account_id = match claims.aid.parse() {
+    let account_id: u64 = match claims.aid.parse() {
         Ok(id) => id,
         _ => {
             eprintln!("Invalid account id: {}", claims.aid);
+            session_ctx.close().await;
             return;
         }
     };
-    let character_id = match claims.cid.parse() {
+    let character_id: u64 = match claims.cid.parse() {
         Ok(id) => id,
         _ => {
             eprintln!("Invalid character id: {}", claims.cid);
+            session_ctx.close().await;
             return;
         }
     };
@@ -111,10 +122,13 @@ async fn handle_login(
         "Manager" => Privilege::Manager,
         _ => {
             eprintln!("Invalid privilege: {}", claims.prv);
+            session_ctx.close().await;
             return;
         }
     };
 
-    println!("Authenticated: {:?}", session_ctx);
-    _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx)).await;
+    println!("Authenticated: {}", session_ctx);
+
+    let account = Account {account_id, character_id, privilege};
+    _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx, account)).await;
 }

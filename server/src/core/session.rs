@@ -20,7 +20,7 @@ pub struct Session {
 }
 
 pub struct SessionContext {
-    pub is_open: bool,
+    pub is_open: RwLock<bool>,
     pub peer_addr: SocketAddr,
 
     pub in_message_tx: RwLock<mpsc::Sender<InMessage>>,
@@ -35,14 +35,20 @@ impl SessionContext {
         out_message_tx: mpsc::Sender<OutMessage>,
         close_tx: mpsc::Sender<()>,
     ) -> SessionContext {
+        let is_open = RwLock::new(true);
         let in_message_tx = RwLock::new(in_message_tx);
+        
         SessionContext {
-            is_open: true,
+            is_open,
             peer_addr,
             in_message_tx,
             out_message_tx,
             close_tx,
         }
+    }
+    
+    pub async fn close(&self) {
+        _ = self.close_tx.send(()).await;
     }
 }
 

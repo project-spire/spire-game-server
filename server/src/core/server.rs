@@ -1,7 +1,7 @@
-use crate::character::player::PlayerBundle;
+use crate::character::player::{Account, PlayerBundle};
 use crate::core::config::config;
 use crate::core::resource::Resource;
-use crate::core::room::RoomContext;
+use crate::core::room::{RoomContext, RoomMessage};
 use crate::core::rooms::{auth_room, station_room};
 use crate::core::session::{InMessage, OutMessage, SessionContext, run_session};
 use std::collections::HashMap;
@@ -14,9 +14,9 @@ use tokio::task::JoinSet;
 
 pub enum ServerMessage {
     Broadcast(OutMessage),
-    SessionAuthenticated(Arc<SessionContext>),
+    SessionAuthenticated(Arc<SessionContext>, Account),
     SessionClosed(Arc<SessionContext>),
-    RoomTransferStart { session: Arc<SessionContext>, player: Arc<PlayerBundle>, target: u64 },
+    RoomTransferBegin { session: Arc<SessionContext>, player: Arc<PlayerBundle>, target: u64 },
     RoomTransferCommit { session: Arc<SessionContext>, player: Arc<PlayerBundle>, target: u64 },
 }
 
@@ -38,6 +38,7 @@ pub async fn run_server() -> Result<(), Box<dyn Error>> {
 
     let ctx = Arc::new(ServerContext::new(message_tx));
     let ctx_listen = ctx.clone();
+    let ctx_handle = ctx.clone();
     let auth_room_ctx = auth_room::run(ctx.clone(), shutdown_tx.subscribe());
     let station_room_ctx = station_room::run(ctx.clone(), shutdown_tx.subscribe());
     
@@ -48,7 +49,7 @@ pub async fn run_server() -> Result<(), Box<dyn Error>> {
         listen(ctx_listen, auth_room_ctx, shutdown_rx_listen).await;
     });
     tasks.spawn(async move {
-        handle(message_rx, shutdown_rx_handle).await;
+        handle(ctx_handle, message_rx, shutdown_rx_handle).await;
     });
 
     while let Some(_) = tasks.join_next().await {}
@@ -100,10 +101,10 @@ fn accept(
 }
 
 async fn handle(
+    ctx: Arc<ServerContext>,
     mut message_rx: mpsc::Receiver<ServerMessage>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
-    let mut sessions = HashMap::new();
     let mut rooms = HashMap::new();
     let mut message_buffer = Vec::with_capacity(64);
 
@@ -115,7 +116,7 @@ async fn handle(
                 }
 
                 for message in message_buffer.drain(0..n) {
-                    handle_internal(&mut sessions, &mut rooms, message).await;
+                    handle_internal(message, &ctx, &mut rooms).await;
                 }
             },
             _ = shutdown_rx.recv() => break,
@@ -124,60 +125,50 @@ async fn handle(
 }
 
 async fn handle_internal(
-    sessions: &mut HashMap<u64, Arc<SessionContext>>,
+    message: ServerMessage,
+    ctx: &Arc<ServerContext>,
     rooms: &mut HashMap<u64, Arc<RoomContext>>,
-    message: ServerMessage
 ) {
     match message {
-        ServerMessage::Broadcast(message) => handle_broadcast(&sessions, message).await,
-        ServerMessage::SessionAuthenticated(session) => handle_session_authenticated(sessions, session).await,
-        ServerMessage::SessionClosed(session) => handle_session_closed(sessions, session),
-        ServerMessage::RoomTransferStart { session, player, target} => handle_room_transfer_start(&rooms, session, player, target).await,
+        ServerMessage::Broadcast(message) => handle_broadcast(rooms, message).await,
+        ServerMessage::SessionAuthenticated(session, account) => handle_session_authenticated(session, account).await,
+        ServerMessage::SessionClosed(session) => handle_session_closed(session).await,
+        ServerMessage::RoomTransferBegin { session, player, target} => handle_room_transfer_begin(&rooms, session, player, target).await,
         ServerMessage::RoomTransferCommit { session, player, target} => {},
     }
 }
 
 async fn handle_broadcast(
-    sessions: &HashMap<u64, Arc<SessionContext>>,
+    rooms: &mut HashMap<u64, Arc<RoomContext>>,
     message: OutMessage
 ) {
-    for (_, session) in sessions {
-        _ = session.out_message_tx.send(message.clone()).await;
+    for room in rooms.values() {
+        _ = room.message_tx.send(RoomMessage::Broadcast(message.clone())).await;
     }
 }
 
-async fn handle_session_authenticated(
-    sessions: &mut HashMap<u64, Arc<SessionContext>>,
-    session: Arc<SessionContext>
-) {
-    //TODO: Check if session is already closed
-
-    sessions.insert(session.account().character_id, session);
-    println!("Sessions count on authenticated: {}", sessions.len());
-}
-
-fn handle_session_closed(
-    sessions: &mut HashMap<u64, Arc<SessionContext>>,
-    session: Arc<SessionContext>
-) {
-    if let Some(account) = session.account.get() {
-        sessions.remove(&account.character_id);
+async fn handle_session_authenticated(session: Arc<SessionContext>, account: Account) {
+    if !(*session.is_open.read().await) {
+        return
     }
-    println!("Sessions count on closed: {}", sessions.len());
 }
 
-async fn handle_room_transfer_start(
+async fn handle_session_closed(mut session: Arc<SessionContext>) {
+    *session.is_open.write().await = false;
+
+    //TODO: Remove from the current room
+}
+
+async fn handle_room_transfer_begin(
     rooms: &HashMap<u64, Arc<RoomContext>>,
     session: Arc<SessionContext>,
     player_bundle: Arc<PlayerBundle>,
     target: u64,
 ) {
     if !rooms.contains_key(&target) {
-        eprintln!("Invalid room transfer: {:?}, target={}", session.account(), target);
+        eprintln!("Invalid room transfer: {}, target={}", session, target);
         return;
     }
-
-
 
     {
         let mut in_message_tx = player_bundle.session.ctx.in_message_tx.write().await;

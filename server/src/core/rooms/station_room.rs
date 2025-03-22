@@ -1,12 +1,8 @@
-use bytes::Bytes;
-use crate::core::room::RoomContext;
+use crate::core::room::{handle_room_message, RoomContext};
 use crate::core::server::ServerContext;
-use crate::core::session::SessionContext;
+use crate::core::session::{InMessage, SessionContext};
 use crate::protocol::*;
-use crate::protocol::net::{
-    NetProtocol,
-    net_protocol::Protocol::*,
-};
+use crate::protocol::net::{*, net_protocol::Protocol};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
@@ -14,27 +10,34 @@ pub fn run(
     server_ctx: Arc<ServerContext>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Arc<RoomContext> {
+    let (room_message_tx, mut room_message_rx) = mpsc::channel(16);
     let (in_message_tx, mut in_message_rx) = mpsc::channel(64);
 
-    let ctx = Arc::new(RoomContext::new(in_message_tx));
+    let ctx = Arc::new(RoomContext::new(room_message_tx, in_message_tx));
+    let ctx_handle = ctx.clone();
 
     tokio::spawn(async move {
-        let mut message_buffer = Vec::with_capacity(64);
+        let mut room_message_buffer = Vec::with_capacity(16);
+        let mut in_message_buffer = Vec::with_capacity(64);
 
         loop {
             tokio::select! {
-                n = in_message_rx.recv_many(&mut message_buffer, 64) => {
+                n = in_message_rx.recv_many(&mut in_message_buffer, 64) => {
                     if n == 0 {
                         break;
                     }
 
-                    for (session_ctx, protocol, data) in message_buffer.drain(0..n) {
-                        if protocol != ProtocolCategory::Net {
-                            eprintln!("Protocol not net: {:?}", protocol);
-                            continue;
-                        }
+                    for in_message in in_message_buffer.drain(0..n) {
+                        handle_in_message(&server_ctx, in_message).await;
+                    }
+                },
+                n = room_message_rx.recv_many(&mut room_message_buffer, 16) => {
+                    if n == 0 {
+                        break;
+                    }
 
-                        handle(&server_ctx, session_ctx, data).await;
+                    for room_message in room_message_buffer.drain(0..n) {
+                        handle_room_message(&ctx_handle, room_message).await;
                     }
                 },
                 _ = shutdown_rx.recv() => break,
@@ -45,25 +48,29 @@ pub fn run(
     ctx
 }
 
-async fn handle(
-    server_ctx: &Arc<ServerContext>,
-    session_ctx: Arc<SessionContext>,
-    data: Bytes,
-) {
+async fn handle_in_message(server_ctx: &Arc<ServerContext>, message: InMessage) {
+    let (session_ctx, category, data) = message;
+    if category != ProtocolCategory::Net {
+        eprintln!("Protocol not net: {:?}", category);
+        session_ctx.close().await;
+        return;
+    }
+
     let protocol = NetProtocol::decode(data);
     if let Err(e) = protocol {
         eprintln!("Failed to decode net protocol: {}", e);
-        _ = session_ctx.close_tx.send(());
+        session_ctx.close().await;
         return;
     }
 
     match protocol.unwrap().protocol {
-        Some(RoomTransferReady(ready)) => {
+        Some(Protocol::RoomTransferReady(ready)) => {
             handle_room_transfer_ready(&server_ctx, session_ctx, ready).await;
         }
         None => {
             _ = session_ctx.close_tx.send(());
         }
+        _ => {}
     }
 }
 
