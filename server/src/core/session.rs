@@ -19,6 +19,12 @@ pub struct Session {
     pub ctx: Arc<SessionContext>,
 }
 
+impl Session {
+    pub fn new(ctx: Arc<SessionContext>) -> Self {
+        Self { ctx }
+    }
+}
+
 pub struct SessionContext {
     pub is_open: RwLock<bool>,
     pub peer_addr: SocketAddr,
@@ -37,7 +43,7 @@ impl SessionContext {
     ) -> SessionContext {
         let is_open = RwLock::new(true);
         let in_message_tx = RwLock::new(in_message_tx);
-        
+
         SessionContext {
             is_open,
             peer_addr,
@@ -46,9 +52,14 @@ impl SessionContext {
             close_tx,
         }
     }
-    
+
     pub async fn close(&self) {
+        *self.is_open.write().await = false;
         _ = self.close_tx.send(()).await;
+    }
+
+    pub async fn is_open(&self) -> bool {
+        *self.is_open.read().await
     }
 }
 
@@ -98,6 +109,7 @@ pub async fn run_session(
     // Reaching this section means that the session has been shutdown or had errored.
     // So abort the tasks.
     tasks.shutdown().await;
+    ctx.close().await;
     close_rx.close();
 
     println!("{} has ended", ctx);

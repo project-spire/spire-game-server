@@ -21,6 +21,16 @@ pub struct Transform {
     pub velocity: Vector2<f32>,
 }
 
+impl Default for Transform {
+    fn default() -> Self {
+        Transform {
+            position: Point2::default(),
+            rotation: UnitVector2::new_normalize(Vector2::new(1.0, 0.0)),
+            velocity: Vector2::default(),
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct StaticBody {
     pub shape: CollisionShape,

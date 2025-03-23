@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use crate::character::movement::MovementController;
 use crate::character::stat::MobilityStats;
@@ -27,4 +28,19 @@ pub struct PlayerBundle {
     // network
     pub account: Account,
     pub session: Session,
+}
+
+
+impl PlayerBundle {
+    pub async fn load(account: Account, session: Session) -> (Arc<Self>, u64) {
+        let mut last_room: u64 = 0;
+
+        (Arc::new(PlayerBundle {
+            transform: Transform::default(),
+            movement_controller: MovementController::default(),
+
+            account,
+            session
+        }), last_room)
+    }
 }

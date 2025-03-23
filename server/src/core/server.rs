@@ -3,7 +3,7 @@ use crate::core::config::config;
 use crate::core::resource::Resource;
 use crate::core::room::{RoomContext, RoomMessage};
 use crate::core::rooms::{auth_room, station_room};
-use crate::core::session::{InMessage, OutMessage, SessionContext, run_session};
+use crate::core::session::{InMessage, OutMessage, SessionContext, run_session, Session};
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -16,8 +16,8 @@ pub enum ServerMessage {
     Broadcast(OutMessage),
     SessionAuthenticated(Arc<SessionContext>, Account),
     SessionClosed(Arc<SessionContext>),
-    RoomTransferBegin { session: Arc<SessionContext>, player: Arc<PlayerBundle>, target: u64 },
-    RoomTransferCommit { session: Arc<SessionContext>, player: Arc<PlayerBundle>, target: u64 },
+    RoomTransferBegin { player: Arc<PlayerBundle>, target: u64 },
+    RoomTransferCommit { player: Arc<PlayerBundle>, target: u64 },
 }
 
 pub struct ServerContext {
@@ -131,10 +131,10 @@ async fn handle_internal(
 ) {
     match message {
         ServerMessage::Broadcast(message) => handle_broadcast(rooms, message).await,
-        ServerMessage::SessionAuthenticated(session, account) => handle_session_authenticated(session, account).await,
+        ServerMessage::SessionAuthenticated(session, account) => handle_session_authenticated(ctx, session, account).await,
         ServerMessage::SessionClosed(session) => handle_session_closed(session).await,
-        ServerMessage::RoomTransferBegin { session, player, target} => handle_room_transfer_begin(&rooms, session, player, target).await,
-        ServerMessage::RoomTransferCommit { session, player, target} => {},
+        ServerMessage::RoomTransferBegin { player, target} => handle_room_transfer_begin(&rooms, player, target).await,
+        ServerMessage::RoomTransferCommit { player, target} => {},
     }
 }
 
@@ -147,26 +147,43 @@ async fn handle_broadcast(
     }
 }
 
-async fn handle_session_authenticated(session: Arc<SessionContext>, account: Account) {
-    if !(*session.is_open.read().await) {
+async fn handle_session_authenticated(
+    ctx: &Arc<ServerContext>,
+    session_ctx: Arc<SessionContext>,
+    account: Account
+) {
+    if !session_ctx.is_open().await {
         return
     }
+
+    let server_ctx = ctx.clone();
+
+    tokio::spawn(async move {
+        let session = Session::new(session_ctx);
+        let (player, last_room) = PlayerBundle::load(account, session).await;
+
+        _ = server_ctx.message_tx.send(
+            ServerMessage::RoomTransferBegin {player, target: last_room});
+    });
 }
 
-async fn handle_session_closed(mut session: Arc<SessionContext>) {
-    *session.is_open.write().await = false;
+async fn handle_session_closed(session: Arc<SessionContext>) {
+
 
     //TODO: Remove from the current room
 }
 
 async fn handle_room_transfer_begin(
     rooms: &HashMap<u64, Arc<RoomContext>>,
-    session: Arc<SessionContext>,
     player_bundle: Arc<PlayerBundle>,
     target: u64,
 ) {
+    if !player_bundle.session.ctx.is_open().await {
+        return
+    }
+
     if !rooms.contains_key(&target) {
-        eprintln!("Invalid room transfer: {}, target={}", session, target);
+        eprintln!("Invalid room transfer: {}, target={}", player_bundle.session.ctx, target);
         return;
     }
 
