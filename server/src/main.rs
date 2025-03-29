@@ -2,6 +2,7 @@ mod character;
 mod core;
 mod item;
 mod physics;
+mod player;
 mod world;
 
 use protocol;

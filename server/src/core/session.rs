@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use crate::protocol::{ProtocolCategory, read_header};
+use crate::protocol::{ProtocolCategory, deserialize_header};
 use std::error::Error;
 use std::fmt;
 use std::fmt::Formatter;
@@ -151,7 +151,7 @@ async fn recv_internal(
         return Ok(Recv::EOF);
     }
 
-    let (protocol, body_len) = read_header(&header_buf);
+    let (protocol, body_len) = deserialize_header(&header_buf);
     if protocol == ProtocolCategory::None {
         return Ok(Recv::InvalidHeader);
     }

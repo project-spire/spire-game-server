@@ -3,7 +3,7 @@ use deadpool_postgres::{Config, Client, Pool, PoolError, Runtime};
 use tokio_postgres::NoTls;
 
 pub struct Resource {
-    db_pool: Pool
+    pub db_pool: Pool
 }
 
 impl Resource {

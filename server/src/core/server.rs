@@ -1,9 +1,10 @@
-use crate::character::player::{Account, PlayerBundle};
 use crate::core::config::config;
 use crate::core::resource::Resource;
 use crate::core::room::{RoomContext, RoomMessage};
 use crate::core::rooms::{auth_room, station_room};
 use crate::core::session::{InMessage, OutMessage, SessionContext, run_session, Session};
+use crate::player::PlayerBundle;
+use crate::player::account::*;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -14,10 +15,10 @@ use tokio::task::JoinSet;
 
 pub enum ServerMessage {
     Broadcast(OutMessage),
-    SessionAuthenticated(Arc<SessionContext>, Account),
+    SessionAuthenticated { session_ctx: Arc<SessionContext>, account: Account, character_id: u64 },
     SessionClosed(Arc<SessionContext>),
-    RoomTransferBegin { player: Arc<PlayerBundle>, target: u64 },
-    RoomTransferCommit { player: Arc<PlayerBundle>, target: u64 },
+    RoomTransferBegin { player_bundle: Box<PlayerBundle>, target: u64 },
+    RoomTransferCommit { player_bundle: Box<PlayerBundle>, target: u64 },
 }
 
 pub struct ServerContext {
@@ -42,14 +43,15 @@ pub async fn run_server() -> Result<(), Box<dyn Error>> {
     let auth_room_ctx = auth_room::run(ctx.clone(), shutdown_tx.subscribe());
     let station_room_ctx = station_room::run(ctx.clone(), shutdown_tx.subscribe());
     
-    let resource = Resource::new().await;
+    let resource = Arc::new(Resource::new().await);
+    let resource_handle = resource.clone();
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
         listen(ctx_listen, auth_room_ctx, shutdown_rx_listen).await;
     });
     tasks.spawn(async move {
-        handle(ctx_handle, message_rx, shutdown_rx_handle).await;
+        handle(ctx_handle, resource_handle, message_rx, shutdown_rx_handle).await;
     });
 
     while let Some(_) = tasks.join_next().await {}
@@ -102,6 +104,7 @@ fn accept(
 
 async fn handle(
     ctx: Arc<ServerContext>,
+    resource: Arc<Resource>,
     mut message_rx: mpsc::Receiver<ServerMessage>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
@@ -116,7 +119,7 @@ async fn handle(
                 }
 
                 for message in message_buffer.drain(0..n) {
-                    handle_internal(message, &ctx, &mut rooms).await;
+                    handle_internal(message, &ctx, &resource, &mut rooms).await;
                 }
             },
             _ = shutdown_rx.recv() => break,
@@ -127,14 +130,23 @@ async fn handle(
 async fn handle_internal(
     message: ServerMessage,
     ctx: &Arc<ServerContext>,
+    resource: &Arc<Resource>,
     rooms: &mut HashMap<u64, Arc<RoomContext>>,
 ) {
     match message {
-        ServerMessage::Broadcast(message) => handle_broadcast(rooms, message).await,
-        ServerMessage::SessionAuthenticated(session, account) => handle_session_authenticated(ctx, session, account).await,
-        ServerMessage::SessionClosed(session) => handle_session_closed(session).await,
-        ServerMessage::RoomTransferBegin { player, target} => handle_room_transfer_begin(&rooms, player, target).await,
-        ServerMessage::RoomTransferCommit { player, target} => {},
+        ServerMessage::Broadcast(message) =>
+            handle_broadcast(rooms, message).await,
+
+        ServerMessage::SessionAuthenticated {session_ctx, account, character_id } =>
+            handle_session_authenticated(ctx, resource.clone(), session_ctx, account, character_id).await,
+
+        ServerMessage::SessionClosed(session_ctx) =>
+            handle_session_closed(session_ctx).await,
+
+        ServerMessage::RoomTransferBegin { player_bundle, target} =>
+            handle_room_transfer_begin(&rooms, player_bundle, target).await,
+
+        ServerMessage::RoomTransferCommit { player_bundle, target} => {},
     }
 }
 
@@ -149,8 +161,10 @@ async fn handle_broadcast(
 
 async fn handle_session_authenticated(
     ctx: &Arc<ServerContext>,
+    resource: Arc<Resource>,
     session_ctx: Arc<SessionContext>,
-    account: Account
+    account: Account,
+    character_id: u64,
 ) {
     if !session_ctx.is_open().await {
         return
@@ -160,22 +174,39 @@ async fn handle_session_authenticated(
 
     tokio::spawn(async move {
         let session = Session::new(session_ctx);
-        let (player, last_room) = PlayerBundle::load(account, session).await;
+        let client = match resource.db_client().await {
+            Ok(client) => client,
+            Err(e) => {
+                eprintln!("Error getting DB client: {}", e);
+                //TODO: Disconnect?
+                return
+            }
+        };
+
+        let player_bundle = match PlayerBundle::load(account, character_id, session, &client).await {
+            Ok(player_bundle) => player_bundle,
+            Err(e) => {
+                eprintln!("Error getting player bundle: {}", e);
+                //TODO: Disconnect?
+                return
+            }
+        };
+
+        //TODO: Get the last room
+        let last_room = 0;
 
         _ = server_ctx.message_tx.send(
-            ServerMessage::RoomTransferBegin {player, target: last_room});
+            ServerMessage::RoomTransferBegin {player_bundle, target: last_room});
     });
 }
 
 async fn handle_session_closed(session: Arc<SessionContext>) {
-
-
     //TODO: Remove from the current room
 }
 
 async fn handle_room_transfer_begin(
     rooms: &HashMap<u64, Arc<RoomContext>>,
-    player_bundle: Arc<PlayerBundle>,
+    player_bundle: Box<PlayerBundle>,
     target: u64,
 ) {
     if !player_bundle.session.ctx.is_open().await {

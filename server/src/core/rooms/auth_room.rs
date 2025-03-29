@@ -1,12 +1,13 @@
-use crate::character::player::{Account, Privilege};
 use crate::core::config::config;
 use crate::core::room::{handle_room_message, RoomContext};
 use crate::core::server::{ServerContext, ServerMessage};
 use crate::core::session::{InMessage, SessionContext};
+use crate::player::account::*;
 use crate::protocol::*;
 use crate::protocol::auth::{*, auth_protocol::Protocol};
 use jsonwebtoken::{Algorithm, Validation, DecodingKey, decode};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
@@ -117,18 +118,21 @@ async fn handle_login(
             return;
         }
     };
-    let privilege = match claims.prv.as_str() {
-        "None" => Privilege::None,
-        "Manager" => Privilege::Manager,
-        _ => {
+    let privilege = match Privilege::from_str(claims.prv.as_str()) {
+        Err(_) => {
             eprintln!("Invalid privilege: {}", claims.prv);
             session_ctx.close().await;
             return;
-        }
+        },
+        Ok(privilege) => privilege
     };
 
     println!("Authenticated: {}", session_ctx);
 
-    let account = Account {account_id, character_id, privilege};
-    _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated(session_ctx, account)).await;
+    let account = Account {account_id, privilege};
+    _ = server_ctx.message_tx.send(ServerMessage::SessionAuthenticated {
+        session_ctx,
+        account,
+        character_id
+    }).await;
 }

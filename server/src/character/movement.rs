@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
-use crate::character::stat::MobilityStats;
-use crate::character::status::Status;
+use crate::character::stat::MobilityStat;
+use crate::character::status_effect::StatusEffectController;
 use crate::physics::object::Transform;
 use crate::protocol::*;
 use crate::protocol::game::*;
@@ -71,8 +71,8 @@ pub fn update(
     mut query: Query<(
         &mut MovementController,
         &mut Transform,
-        &MobilityStats,
-        Option<&Status>)>,
+        &MobilityStat,
+        Option<&StatusEffectController>)>,
     time: Res<WorldTime>,
 ) {
     query.iter_mut().for_each(
@@ -109,7 +109,7 @@ fn handle_command(
     command: MovementCommand,
     controller: &mut MovementController,
     transform: &mut Transform,
-    status: Option<&Status>,
+    status: Option<&StatusEffectController>,
 ) {
     match command {
         Halt => if controller.state == Walking || controller.state == Running {
@@ -169,7 +169,7 @@ fn handle_command(
 fn handle_movement(
     controller: &MovementController,
     transform: &mut Transform,
-    mobility: &MobilityStats,
+    mobility: &MobilityStat,
     time: &Res<WorldTime>,
 ) {
     //TODO: Extract to config?

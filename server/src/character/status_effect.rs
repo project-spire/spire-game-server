@@ -14,7 +14,7 @@ pub enum StatusEffect {
 }
 
 #[derive(Component)]
-pub struct Status {
-    temporary_effects: Vec<(StatusEffect, Instant)>,
-    permanent_effects: Vec<StatusEffect>,
+pub struct StatusEffectController {
+    pub temporary_effects: Vec<(StatusEffect, Instant)>,
+    pub permanent_effects: Vec<StatusEffect>,
 }
