@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{Data, DeriveInput, Error, Meta};
+use syn::{Data, DeriveInput, Error, Fields, Meta};
 
 pub fn expand_derive_status_effect(input: DeriveInput) -> Result<TokenStream, Error> {
     let data = match input.data {
@@ -36,7 +36,14 @@ pub fn expand_derive_status_effect(input: DeriveInput) -> Result<TokenStream, Er
             "StatusEffect variant must have a kind attribute (buff, debuff, passive, curse)"
         ))?;
 
-        kind_arms.push(quote! { Self::#variant_name => #kind, });
+        match &variant.fields {
+            Fields::Unit => {
+                kind_arms.push(quote! { Self::#variant_name => #kind, })
+            },
+            Fields::Named(_) | Fields::Unnamed(_) => {
+                kind_arms.push(quote! { Self::#variant_name { .. } => #kind, })
+            },
+        }
     }
 
     let out = quote! {
