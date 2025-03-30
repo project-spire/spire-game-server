@@ -1,4 +1,4 @@
-use crate::core::config::config;
+use crate::core::config::*;
 use crate::core::resource::Resource;
 use crate::core::room::{RoomContext, RoomMessage};
 use crate::core::rooms::{auth_room, station_room};
@@ -43,12 +43,13 @@ pub async fn run_server() -> Result<(), Box<dyn Error>> {
     let auth_room_ctx = auth_room::run(ctx.clone(), shutdown_tx.subscribe());
     let station_room_ctx = station_room::run(ctx.clone(), shutdown_tx.subscribe());
     
-    let resource = Arc::new(Resource::new().await);
+    let resource = Arc::new(Resource::new(DatabaseConfig::load()).await);
     let resource_handle = resource.clone();
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
-        listen(ctx_listen, auth_room_ctx, shutdown_rx_listen).await;
+        let server_config = ServerConfig::load();
+        listen(server_config.game_listen_port, ctx_listen, auth_room_ctx, shutdown_rx_listen).await;
     });
     tasks.spawn(async move {
         handle(ctx_handle, resource_handle, message_rx, shutdown_rx_handle).await;
@@ -61,11 +62,12 @@ pub async fn run_server() -> Result<(), Box<dyn Error>> {
 }
 
 async fn listen(
+    port: u16,
     ctx: Arc<ServerContext>,
     auth_room_ctx: Arc<RoomContext>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
-    let listen_addr = SocketAddr::from(([0, 0, 0, 0], config().game_listen_port));
+    let listen_addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(listen_addr).await.unwrap();
     println!("Server listening game at {}", listen_addr);
 

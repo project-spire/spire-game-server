@@ -1,4 +1,4 @@
-use crate::core::config::config;
+use crate::core::config::AuthConfig;
 use crate::core::room::{handle_room_message, RoomContext};
 use crate::core::server::{ServerContext, ServerMessage};
 use crate::core::session::{InMessage, SessionContext};
@@ -29,6 +29,7 @@ pub fn run(
     let ctx_handle = ctx.clone();
 
     tokio::spawn(async move {
+        let auth_config = AuthConfig::load();
         let mut room_message_buffer = Vec::with_capacity(16);
         let mut in_message_buffer = Vec::with_capacity(64);
 
@@ -40,7 +41,7 @@ pub fn run(
                     }
 
                     for in_message in in_message_buffer.drain(0..n) {
-                        handle_in_message(&server_ctx, in_message).await;
+                        handle_in_message(&server_ctx, &auth_config, in_message).await;
                     }
                 },
                 n = room_message_rx.recv_many(&mut room_message_buffer, 16) => {
@@ -60,7 +61,11 @@ pub fn run(
     ctx
 }
 
-async fn handle_in_message(server_ctx: &Arc<ServerContext>, message: InMessage) {
+async fn handle_in_message(
+    server_ctx: &Arc<ServerContext>,
+    auth_config: &AuthConfig,
+    message: InMessage
+) {
     let (session_ctx, category, data) = message;
     if category != ProtocolCategory::Auth {
         eprintln!("Protocol category not auth: {:?}", category);
@@ -77,7 +82,7 @@ async fn handle_in_message(server_ctx: &Arc<ServerContext>, message: InMessage) 
 
     match protocol.unwrap().protocol {
         Some(Protocol::Login(login)) => {
-            handle_login(&server_ctx, session_ctx, login).await;
+            handle_login(&server_ctx, auth_config, session_ctx, login).await;
         }
         None => {
             _ = session_ctx.close_tx.send(());
@@ -87,13 +92,14 @@ async fn handle_in_message(server_ctx: &Arc<ServerContext>, message: InMessage) 
 
 async fn handle_login(
     server_ctx: &Arc<ServerContext>,
+    auth_config: &AuthConfig,
     session_ctx: Arc<SessionContext>,
     login: Login,
 ) {
     //TODO: Initialize DecodingKey once, and reuse
     let claims = match decode::<Claims>(
         &login.token,
-        &DecodingKey::from_secret(config().auth_key.as_bytes()),
+        &auth_config.key,
         &Validation::new(Algorithm::HS256),
     ) {
         Ok(data) => data.claims,
