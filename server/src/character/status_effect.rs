@@ -1,16 +1,19 @@
 use bevy_ecs::prelude::*;
 use std::time::Instant;
+use macros::StatusEffect;
 
-pub enum StatusEffectType {
+pub enum StatusEffectKind {
     Buff,
     Debuff,
     Passive,
     Curse,
 }
 
+#[derive(StatusEffect)]
 pub enum StatusEffect {
-    Stun,
-    Slow { modifier: u8 },
+    #[debuff] Stun,
+    // #[debuff] Slow { modifier: u8 },
+    // #[buff] Haste { modifier: u8 },
 }
 
 #[derive(Component)]

@@ -1,37 +1,53 @@
-use proc_macro::TokenStream;
-use syn::{parse_macro_input, Data, DeriveInput, Meta};
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
+use syn::{Data, DeriveInput, Error, Meta};
 
-// #[proc_macro_derive(StatusEffect, attributes(buff, debuff, passive, curse))]
-// pub fn derive_status_effect(input: TokenStream) -> TokenStream {
-//     let input =  parse_macro_input!(input as DeriveInput);
-//     let name = input.ident;
-//     let variants = match input.data {
-//         Data::Enum(e) => e.variants,
-//         _ =>  panic!("StatusEffect can only be derived for enums"),
-//     };
-// 
-//     let mut get_type_arms = Vec::new();
-//     for variant in variants {
-//         let variant_name = &variant.ident;
-//         let mut effect_type = None;
-// 
-//         for attr in variant.attrs {
-//             if let Meta::Path(path) = attr.parse_meta().unwrap() {
-// 
-//             }
-//         }
-//     }
-// 
-//     let expanded = quote! {
-//         impl #name {
-//             pub fn get_type(&self) -> StateEffectType {
-//                 match self {
-//                     #(#get_type_arms)*
-//                 }
-//             }
-//         }
-//     };
-// 
-//     TokenStream::from(expanded)
-// }
+pub fn expand_derive_status_effect(input: DeriveInput) -> Result<TokenStream, Error> {
+    let data = match input.data {
+        Data::Enum(data) => data,
+        _ => return Err(Error::new_spanned(
+            input,
+            "StatusEffect can only be derived for enums"
+        ))
+    };
+    let name = input.ident;
+
+    let mut kind_arms = Vec::new();
+    for variant in &data.variants {
+        let variant_name = &variant.ident;
+
+        let mut kind = None;
+        for attr in &variant.attrs {
+            match &attr.meta {
+                Meta::Path(path) if path.is_ident("buff") =>
+                    kind = Some(quote! { StatusEffectKind::Buff }),
+                Meta::Path(path) if path.is_ident("debuff") =>
+                    kind = Some(quote! { StatusEffectKind::Debuff }),
+                Meta::Path(path) if path.is_ident("passive") =>
+                    kind = Some(quote! { StatusEffectKind::Passive }),
+                Meta::Path(path) if path.is_ident("curse") =>
+                    kind = Some(quote! { StatusEffectKind::Curse }),
+                _ => {},
+            }
+        }
+
+        let kind = kind.ok_or_else(|| Error::new_spanned(
+            variant_name,
+            "StatusEffect variant must have a kind attribute (buff, debuff, passive, curse)"
+        ))?;
+
+        kind_arms.push(quote! { Self::#variant_name => #kind, });
+    }
+
+    let out = quote! {
+        impl #name {
+            pub fn kind(&self) -> StatusEffectKind {
+                match self {
+                    #(#kind_arms)*
+                }
+            }
+        }
+    };
+
+    Ok(out.into())
+}
