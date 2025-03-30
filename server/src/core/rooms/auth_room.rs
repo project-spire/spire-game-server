@@ -90,18 +90,20 @@ async fn handle_login(
     session_ctx: Arc<SessionContext>,
     login: Login,
 ) {
-    let token_data = decode::<Claims>(
+    //TODO: Initialize DecodingKey once, and reuse
+    let claims = match decode::<Claims>(
         &login.token,
         &DecodingKey::from_secret(config().auth_key.as_bytes()),
         &Validation::new(Algorithm::HS256),
-    );
-    if let Err(e) = token_data {
-        eprintln!("Error decoding token({}): {}", &login.token, e);
-        session_ctx.close().await;
-        return;
-    }
+    ) {
+        Ok(data) => data.claims,
+        Err(e) => {
+            eprintln!("Error decoding token({}): {}", &login.token, e);
+            session_ctx.close().await;
+            return;
+        }
+    };
 
-    let claims = token_data.unwrap().claims;
     let account_id: u64 = match claims.aid.parse() {
         Ok(id) => id,
         _ => {

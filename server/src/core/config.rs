@@ -34,7 +34,7 @@ struct ConfigJson {
 pub fn init() {
     let path = Path::new(env!("OUT_DIR")).join("config.json");
     println!("Initializing config from {}...", path.display());
-    let mut json = serde_json::from_str::<ConfigJson>(&read_from_file(&path)).unwrap();
+    let json = serde_json::from_str::<ConfigJson>(&read_from_file(&path)).unwrap();
 
     println!("Initializing config from env variables...");
     
@@ -73,5 +73,5 @@ fn read_from_file(path: &Path) -> String {
     let mut buf = String::new();
     f.read_to_string(&mut buf).unwrap();
 
-    buf
+    buf.trim().to_string()
 }
