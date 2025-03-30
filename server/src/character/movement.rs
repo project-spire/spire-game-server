@@ -237,7 +237,7 @@ pub fn sync(
     let protocol = GameProtocol {
         protocol: Some(game_protocol::Protocol::MovementSyncList(MovementSyncList { list }))
     };
-    let buf = serialize(ProtocolCategory::Game, &protocol);
+    let buf = serialize_protocol(ProtocolCategory::Game, &protocol);
     if let Err(e) = buf {
         //TODO: Log
         return;
