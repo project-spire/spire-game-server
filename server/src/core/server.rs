@@ -43,7 +43,7 @@ pub async fn run_server() -> Result<(), Box<dyn Error>> {
     let auth_room_ctx = auth_room::run(ctx.clone(), shutdown_tx.subscribe());
     let station_room_ctx = station_room::run(ctx.clone(), shutdown_tx.subscribe());
     
-    let resource = Arc::new(Resource::new(DatabaseConfig::load()).await);
+    let resource = Arc::new(Resource::load().await);
     let resource_handle = resource.clone();
 
     let mut tasks = JoinSet::new();

@@ -20,7 +20,7 @@ pub struct CharacterStat {
 impl CharacterStat {
     pub async fn load(character_id: u64, client: &Client) -> Result<CharacterStat, Error> {
         let row = client.query_one(
-            "SELECT level, exp, strength, dexterity, constitution, intelligence, faith\
+            "SELECT level, exp, strength, dexterity, constitution, intelligence, faith \
             FROM character_stats WHERE character_id=$1",
             &[&(character_id as i64)],
         ).await?;

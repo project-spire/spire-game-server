@@ -7,7 +7,8 @@ pub struct Resource {
 }
 
 impl Resource {
-    pub async fn new(database_config: DatabaseConfig) -> Resource {
+    pub async fn load() -> Resource {
+        let database_config = DatabaseConfig::load();
         let mut pool_config = Config::new();
         pool_config.host = Some(database_config.host);
         pool_config.port = Some(database_config.port);

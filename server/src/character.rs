@@ -9,11 +9,11 @@ pub mod vision;
 
 
 use bevy_ecs::prelude::*;
-use std::str::FromStr;
-use strum::EnumString;
+use postgres_types::{FromSql, ToSql};
 use tokio_postgres::{Client, Error};
 
-#[derive(Debug, PartialEq, EnumString)]
+#[derive(Debug, FromSql, ToSql)]
+#[postgres(name = "race")]
 pub enum Race {
     Human,
     Barbarian,
@@ -30,7 +30,7 @@ pub struct Character {
 impl Character {
     pub async fn load(character_id: u64, client: &Client) -> Result<Character, Error> {
         let row = client.query_one(
-            "SELECT name, race\
+            "SELECT name, race \
             FROM characters WHERE id=$1",
             &[&(character_id as i64)],
         ).await?;
@@ -38,7 +38,7 @@ impl Character {
         Ok(Character {
             id: character_id,
             name: row.get::<_, String>(0),
-            race: Race::from_str(&row.get::<_, String>(1)).unwrap(),
+            race: row.get::<_, Race>(1),
         })
     }
 }
