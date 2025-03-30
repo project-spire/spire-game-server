@@ -156,7 +156,7 @@ async fn recv_internal(
         return Ok(Recv::InvalidHeader);
     }
 
-    let mut body_buf = Vec::with_capacity(body_len as usize);
+    let mut body_buf = vec![0u8; body_len as usize];
     let n = reader.read_exact(&mut body_buf).await?;
     if n == 0 {
         return Ok(Recv::EOF);
