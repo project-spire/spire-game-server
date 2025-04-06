@@ -4,6 +4,8 @@ mod item;
 mod physics;
 mod player;
 mod world;
+mod auth;
+mod station;
 
 use protocol;
 

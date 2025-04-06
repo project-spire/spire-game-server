@@ -1,18 +1,67 @@
-use bytes::Bytes;
-use crate::protocol::{ProtocolCategory, deserialize_header};
-use std::error::Error;
+use bytes::{Bytes, BytesMut};
+use crate::protocol::{HEADER_SIZE, ProtocolCategory, deserialize_header};
 use std::fmt;
 use std::fmt::Formatter;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::atomic::Ordering;
 use bevy_ecs::component::Component;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
-use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
 
 pub type InMessage = (Arc<SessionContext>, ProtocolCategory, Bytes);
 pub type OutMessage = Bytes;
+
+pub enum SessionCommand {
+    Close,
+    RoomTransfer { in_message_tx: mpsc::Sender<InMessage> }
+}
+
+pub struct SessionContext {
+    pub is_open: AtomicBool,
+    pub peer_addr: SocketAddr,
+
+    pub out_message_tx: mpsc::Sender<OutMessage>,
+    pub command_tx: mpsc::Sender<SessionCommand>,
+}
+
+impl SessionContext {
+    pub fn new(
+        peer_addr: SocketAddr,
+        out_message_tx: mpsc::Sender<OutMessage>,
+        command_tx: mpsc::Sender<SessionCommand>,
+    ) -> SessionContext {
+        let is_open = AtomicBool::new(true);
+
+        SessionContext {
+            is_open,
+            peer_addr,
+
+            out_message_tx,
+            command_tx,
+        }
+    }
+
+    pub async fn close(&self) {
+        if !self.is_open.swap(false, Ordering::SeqCst) {
+            return;
+        }
+
+        _ = self.command_tx.send(SessionCommand::Close).await;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.is_open.load(Ordering::SeqCst)
+    }
+}
+
+impl fmt::Display for SessionContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Session({})", self.peer_addr)
+    }
+}
 
 #[derive(Component)]
 pub struct Session {
@@ -25,59 +74,8 @@ impl Session {
     }
 }
 
-pub struct SessionContext {
-    pub is_open: RwLock<bool>,
-    pub peer_addr: SocketAddr,
-
-    pub in_message_tx: RwLock<mpsc::Sender<InMessage>>,
-    pub out_message_tx: mpsc::Sender<OutMessage>,
-    pub close_tx: mpsc::Sender<()>,
-}
-
-impl SessionContext {
-    pub fn new(
-        peer_addr: SocketAddr,
-        in_message_tx: mpsc::Sender<InMessage>,
-        out_message_tx: mpsc::Sender<OutMessage>,
-        close_tx: mpsc::Sender<()>,
-    ) -> SessionContext {
-        let is_open = RwLock::new(true);
-        let in_message_tx = RwLock::new(in_message_tx);
-
-        SessionContext {
-            is_open,
-            peer_addr,
-            in_message_tx,
-            out_message_tx,
-            close_tx,
-        }
-    }
-
-    pub async fn close(&self) {
-        *self.is_open.write().await = false;
-        _ = self.close_tx.send(()).await;
-    }
-
-    pub async fn is_open(&self) -> bool {
-        *self.is_open.read().await
-    }
-}
-
-impl fmt::Display for SessionContext {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Session({})", self.peer_addr)
-    }
-}
-
-enum Recv {
-    Message(ProtocolCategory, Bytes),
-    EOF,
-    InvalidHeader,
-}
-
 pub async fn run_session(
     stream: TcpStream,
-    in_message_tx: mpsc::Sender<InMessage>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Arc<SessionContext> {
     let peer_addr = stream
@@ -85,84 +83,83 @@ pub async fn run_session(
         .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
     let (reader, writer) = tokio::io::split(stream);
 
-    let (out_message_tx, in_message_rx) = mpsc::channel(32);
-    let (close_tx, mut close_rx) = mpsc::channel(1);
+    let (out_message_tx, out_message_rx) = mpsc::channel(32);
+    let (command_tx, command_rx) = mpsc::channel(1);
 
-    let ctx = Arc::new(SessionContext::new(peer_addr, in_message_tx, out_message_tx, close_tx));
-    let ctx_recv = ctx.clone();
+    let ctx = Arc::new(SessionContext::new(peer_addr, out_message_tx, command_tx));
 
     println!("{} has started", ctx);
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
-        recv(reader, ctx_recv).await;
+        recv(reader, command_rx).await;
     });
     tasks.spawn(async move {
-        send(writer, in_message_rx).await;
+        send(writer, out_message_rx).await;
     });
 
     tokio::select! {
         _ = tasks.join_next() => {}
-        _ = close_rx.recv() => { close_rx.close(); }
         _ = shutdown_rx.recv() => {}
     }
     // Reaching this section means that the session has been shutdown or had errored.
     // So abort the tasks.
     tasks.shutdown().await;
     ctx.close().await;
-    close_rx.close();
 
     println!("{} has ended", ctx);
     ctx
 }
 
-async fn recv(mut reader: ReadHalf<TcpStream>, ctx: Arc<SessionContext>) {
+async fn recv(mut reader: ReadHalf<TcpStream>, mut command_rx: mpsc::Receiver<SessionCommand>) {
+    let in_message_tx = None;
+
     loop {
-        match recv_internal(&mut reader).await {
-            Ok(Recv::Message(protocol, data)) => {
-                _ = ctx
-                    .in_message_tx
-                    .read()
-                    .await
-                    .send((ctx.clone(), protocol, data))
-                    .await;
+        let mut header_buf = BytesMut::with_capacity(HEADER_SIZE);
+        let mut header_bytes_read = 0;
+        while header_bytes_read < HEADER_SIZE {
+            tokio::select! {
+                n = reader.read_buf(&mut header_buf[header_bytes_read..HEADER_SIZE]) => match n {
+                    Ok(n) if n == 0 => {
+                        return; // EOF
+                    }
+                    Ok(n) => {
+                        header_bytes_read += n;
+                    }
+                    Err(e) => {
+                        todo!();
+                        return;
+                    }
+                }
+                // command = command_rx.recv() => match command {
+                //     todo!();
+                // }
             }
-            Ok(Recv::EOF) => {
-                break;
-            }
-            Ok(Recv::InvalidHeader) => {
-                eprintln!("Invalid header received");
-                break;
-            }
-            Err(e) => {
-                eprintln!("Error receiving: {}", e);
-                break;
+        }
+
+        let header = deserialize_header(&header_buf[..HEADER_SIZE].try_into().unwrap());
+        let body_buf = BytesMut::with_capacity(header.length);
+        let mut body_bytes_read = 0;
+        while body_bytes_read < header.length {
+            tokio::select! {
+                n = reader.read_buf(&mut body_buf[body_bytes_read..header.length]) => match n {
+                    Ok(n) if n == 0 => {
+                        return; // EOF
+                    }
+                    Ok(n) => {
+                        body_bytes_read += n;
+                    }
+                    Err(e) => {
+                        todo!();
+                        return;
+                    }
+                }
+                // command = command_rx.recv().await => match command {
+                //     todo!();
+                // }
             }
         }
     }
-}
-
-async fn recv_internal(
-    reader: &mut ReadHalf<TcpStream>,
-) -> Result<Recv, Box<dyn Error + Send + Sync>> {
-    let mut header_buf = [0u8; 4];
-    let n = reader.read_exact(&mut header_buf).await?;
-    if n == 0 {
-        return Ok(Recv::EOF);
-    }
-
-    let (protocol, body_len) = deserialize_header(&header_buf);
-    if protocol == ProtocolCategory::None {
-        return Ok(Recv::InvalidHeader);
-    }
-
-    let mut body_buf = vec![0u8; body_len as usize];
-    let n = reader.read_exact(&mut body_buf).await?;
-    if n == 0 {
-        return Ok(Recv::EOF);
-    }
-
-    Ok(Recv::Message(protocol, Bytes::from(body_buf)))
 }
 
 async fn send(mut writer: WriteHalf<TcpStream>, mut out_message_rx: mpsc::Receiver<OutMessage>) {
