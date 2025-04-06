@@ -31,7 +31,11 @@ impl ServerContext {
     }
 }
 
-pub async fn run_server() -> Result<(), Box<dyn Error>> {
+pub struct ServerRunOptions {
+    pub dry_run: bool,
+}
+
+pub async fn run_server(options: ServerRunOptions) -> Result<(), Box<dyn Error>> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let shutdown_rx_listen = shutdown_tx.subscribe();
     let shutdown_rx_handle = shutdown_tx.subscribe();
@@ -45,6 +49,11 @@ pub async fn run_server() -> Result<(), Box<dyn Error>> {
     
     let resource = Arc::new(Resource::load().await);
     let resource_handle = resource.clone();
+
+    if options.dry_run {
+        println!("Dry running done!");
+        return Ok(());
+    }
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {

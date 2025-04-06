@@ -9,6 +9,7 @@ protocol = { path = "../protocol/rs" }
 
 bevy_ecs = "0.15"
 bytes = { version = "1", default-features = false }
+clap = { version = "4", features = ["derive"] }
 deadpool-postgres = "0.14"
 jsonwebtoken = "9"
 nalgebra = { workspace = true }
