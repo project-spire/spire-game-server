@@ -2,7 +2,7 @@ use crate::core::room::{handle_room_message, RoomContext};
 use crate::core::server::ServerContext;
 use crate::core::session::{InMessage, SessionContext};
 use crate::protocol::*;
-use crate::protocol::net::{*, net_protocol::Protocol};
+use crate::protocol::net::{*, net_client_protocol::Protocol};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
@@ -56,7 +56,7 @@ async fn handle_in_message(server_ctx: &Arc<ServerContext>, message: InMessage) 
         return;
     }
 
-    let protocol = NetProtocol::decode(data);
+    let protocol = NetClientProtocol::decode(data);
     if let Err(e) = protocol {
         eprintln!("Failed to decode net protocol: {}", e);
         session_ctx.close().await;

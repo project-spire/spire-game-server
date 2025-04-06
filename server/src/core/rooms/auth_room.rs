@@ -4,7 +4,7 @@ use crate::core::server::{ServerContext, ServerMessage};
 use crate::core::session::{InMessage, SessionContext};
 use crate::player::account::*;
 use crate::protocol::*;
-use crate::protocol::auth::{*, auth_protocol::Protocol};
+use crate::protocol::auth::{*, auth_client_protocol::Protocol};
 use jsonwebtoken::{Algorithm, Validation, DecodingKey, decode};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -73,7 +73,7 @@ async fn handle_in_message(
         return;
     }
 
-    let protocol = AuthProtocol::decode(data);
+    let protocol = AuthClientProtocol::decode(data);
     if let Err(e) = protocol {
         eprintln!("Failed to decode auth protocol: {}", e);
         _ = session_ctx.close_tx.send(());

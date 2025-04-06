@@ -213,7 +213,7 @@ pub fn sync(
     mut query: Query<(Entity, &mut MovementController, &Transform), Changed<MovementController>>,
 ) {
     //TODO: initialize Vec with query size
-    let mut list = Vec::new();
+    let mut movements = Vec::new();
 
     query.iter_mut().for_each(|(entity, mut controller, transform)| {
         let interpolation = if let Some(interpolation) = controller.interpolation.take() {
@@ -223,7 +223,7 @@ pub fn sync(
             Linear
         };
 
-        let sync = MovementSync {
+        let movement = Movement {
             entity: entity.to_bits(),
             state: controller.state as i32,
             mode: controller.mode as i32,
@@ -231,11 +231,11 @@ pub fn sync(
             position: Some(transform.position.into()),
             velocity: Some(transform.velocity.into()),
         };
-        list.push(sync);
+        movements.push(movement);
     });
 
-    let protocol = GameProtocol {
-        protocol: Some(game_protocol::Protocol::MovementSyncList(MovementSyncList { list }))
+    let protocol = GameServerProtocol {
+        protocol: Some(game_server_protocol::Protocol::MovementSync(MovementSync { movements }))
     };
     let buf = serialize_protocol(ProtocolCategory::Game, &protocol);
     if let Err(e) = buf {
