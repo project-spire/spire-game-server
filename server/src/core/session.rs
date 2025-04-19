@@ -1,178 +1,129 @@
 use bytes::{Bytes, BytesMut};
 use crate::protocol::{HEADER_SIZE, ProtocolCategory, deserialize_header};
-use std::fmt;
-use std::fmt::Formatter;
+use std::error::Error;
 use std::net::SocketAddr;
-use std::sync::{atomic::AtomicBool, Arc};
-use std::sync::atomic::Ordering;
-use bevy_ecs::component::Component;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
-use tokio::task::JoinSet;
 
-pub type InMessage = (Arc<SessionContext>, ProtocolCategory, Bytes);
+pub type InMessage = (SessionContext, ProtocolCategory, Bytes);
 pub type OutMessage = Bytes;
 
-pub enum SessionCommand {
-    Close,
-    RoomTransfer { in_message_tx: mpsc::Sender<InMessage> }
-}
-
+#[derive(Clone)]
 pub struct SessionContext {
-    pub is_open: AtomicBool,
-    pub peer_addr: SocketAddr,
-
     pub out_message_tx: mpsc::Sender<OutMessage>,
-    pub command_tx: mpsc::Sender<SessionCommand>,
+    pub close_tx: mpsc::Sender<()>,
 }
 
 impl SessionContext {
     pub fn new(
-        peer_addr: SocketAddr,
         out_message_tx: mpsc::Sender<OutMessage>,
-        command_tx: mpsc::Sender<SessionCommand>,
+        close_tx: mpsc::Sender<()>,
     ) -> SessionContext {
-        let is_open = AtomicBool::new(true);
-
         SessionContext {
-            is_open,
-            peer_addr,
-
             out_message_tx,
-            command_tx,
+            close_tx,
         }
     }
 
     pub async fn close(&self) {
-        if !self.is_open.swap(false, Ordering::SeqCst) {
-            return;
-        }
-
-        _ = self.command_tx.send(SessionCommand::Close).await;
+        _ = self.close_tx.send(()).await;
     }
 
-    pub fn is_open(&self) -> bool {
-        self.is_open.load(Ordering::SeqCst)
-    }
-}
-
-impl fmt::Display for SessionContext {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Session({})", self.peer_addr)
-    }
-}
-
-#[derive(Component)]
-pub struct Session {
-    pub ctx: Arc<SessionContext>,
-}
-
-impl Session {
-    pub fn new(ctx: Arc<SessionContext>) -> Self {
-        Self { ctx }
+    pub fn is_closed(&self) -> bool {
+        self.close_tx.is_closed()
     }
 }
 
 pub async fn run_session(
     stream: TcpStream,
+    in_message_tx: mpsc::Sender<InMessage>,
     mut shutdown_rx: broadcast::Receiver<()>,
-) -> Arc<SessionContext> {
+) {
     let peer_addr = stream
         .peer_addr()
         .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
     let (reader, writer) = tokio::io::split(stream);
 
     let (out_message_tx, out_message_rx) = mpsc::channel(32);
-    let (command_tx, command_rx) = mpsc::channel(1);
+    let (close_tx, close_rx) = mpsc::channel(1);
+    let (retrieve_tx, retrieve_rx) = broadcast::channel(1);
+    let ctx = SessionContext::new(out_message_tx, close_tx);
 
-    let ctx = Arc::new(SessionContext::new(peer_addr, out_message_tx, command_tx));
+    println!("Session({}) has started", peer_addr);
 
-    println!("{} has started", ctx);
+    let retrieve_rx_recv = retrieve_rx.resubscribe();
+    let retrieve_rx_send = retrieve_rx.resubscribe();
+    tokio::spawn(async move {
+        let (recv_result, send_result) = tokio::join!(
+            recv(reader, in_message_tx, retrieve_rx_recv, ctx),
+            send(writer, out_message_rx, retrieve_rx_send),
+        );
 
-    let mut tasks = JoinSet::new();
-    tasks.spawn(async move {
-        recv(reader, command_rx).await;
+        // println!("Session({}) has ended", peer_addr);
     });
-    tasks.spawn(async move {
-        send(writer, out_message_rx).await;
-    });
-
-    tokio::select! {
-        _ = tasks.join_next() => {}
-        _ = shutdown_rx.recv() => {}
-    }
-    // Reaching this section means that the session has been shutdown or had errored.
-    // So abort the tasks.
-    tasks.shutdown().await;
-    ctx.close().await;
-
-    println!("{} has ended", ctx);
-    ctx
 }
 
-async fn recv(mut reader: ReadHalf<TcpStream>, mut command_rx: mpsc::Receiver<SessionCommand>) {
-    let in_message_tx = None;
+enum RecvResult {
+    Retrieve(ReadHalf<TcpStream>, mpsc::Sender<InMessage>),
+    EOF,
+    Error(Box<dyn Error + Send + Sync>),
+}
 
+async fn recv(
+    mut reader: ReadHalf<TcpStream>,
+    mut in_message_tx: mpsc::Sender<InMessage>,
+    mut retrieve_rx: broadcast::Receiver<()>,
+    ctx: SessionContext,
+) -> RecvResult {
     loop {
-        let mut header_buf = BytesMut::with_capacity(HEADER_SIZE);
-        let mut header_bytes_read = 0;
-        while header_bytes_read < HEADER_SIZE {
-            tokio::select! {
-                n = reader.read_buf(&mut header_buf[header_bytes_read..HEADER_SIZE]) => match n {
-                    Ok(n) if n == 0 => {
-                        return; // EOF
-                    }
-                    Ok(n) => {
-                        header_bytes_read += n;
-                    }
-                    Err(e) => {
-                        todo!();
-                        return;
-                    }
-                }
-                // command = command_rx.recv() => match command {
-                //     todo!();
-                // }
-            }
+        let mut header_buf = [0u8; HEADER_SIZE];
+        match reader.read_exact(&mut header_buf).await {
+            Ok(n) if n == 0 => return RecvResult::EOF,
+            Ok(_) => {},
+            Err(e) => return RecvResult::Error(e.into()),
+        }
+        let header = deserialize_header(&header_buf);
+
+        let mut body_buf = BytesMut::with_capacity(header.length);
+        match reader.read_exact(&mut body_buf[..header.length]).await {
+            Ok(n) if n == 0 => return RecvResult::EOF,
+            Ok(_) => {},
+            Err(e) => return RecvResult::Error(e.into()),
         }
 
-        let header = deserialize_header(&header_buf[..HEADER_SIZE].try_into().unwrap());
-        let body_buf = BytesMut::with_capacity(header.length);
-        let mut body_bytes_read = 0;
-        while body_bytes_read < header.length {
-            tokio::select! {
-                n = reader.read_buf(&mut body_buf[body_bytes_read..header.length]) => match n {
-                    Ok(n) if n == 0 => {
-                        return; // EOF
-                    }
-                    Ok(n) => {
-                        body_bytes_read += n;
-                    }
-                    Err(e) => {
-                        todo!();
-                        return;
-                    }
-                }
-                // command = command_rx.recv().await => match command {
-                //     todo!();
-                // }
-            }
+        _ = in_message_tx.send((ctx.clone(), header.category, body_buf.freeze())).await;
+
+        if let Ok(_) = retrieve_rx.try_recv() {
+            return RecvResult::Retrieve(reader, in_message_tx);
         }
     }
 }
 
-async fn send(mut writer: WriteHalf<TcpStream>, mut out_message_rx: mpsc::Receiver<OutMessage>) {
+enum SendResult {
+    Retrieve(WriteHalf<TcpStream>, mpsc::Receiver<OutMessage>),
+    Error(Box<dyn Error + Send + Sync>),
+    Closed,
+}
+
+async fn send(
+    mut writer: WriteHalf<TcpStream>,
+    mut out_message_rx: mpsc::Receiver<OutMessage>,
+    mut retrieve_rx: broadcast::Receiver<()>,
+) -> SendResult {
     loop {
-        match out_message_rx.recv().await {
-            Some(data) => {
-                if let Err(e) = writer.write_all(&data[..]).await {
-                    eprintln!("Error sending: {}", e);
-                    break;
+        tokio::select! {
+            m = out_message_rx.recv() => match m {
+                Some(data) => {
+                    if let Err(e) = writer.write_all(&data[..]).await {
+                        return SendResult::Error(e.into());
+                    }
                 }
-            }
-            None => {
-                break;
+                None => return SendResult::Closed,
+            },
+            r = retrieve_rx.recv() => return match r {
+                Ok(_) => SendResult::Retrieve(writer, out_message_rx),
+                Err(_) => SendResult::Closed,
             }
         }
     }

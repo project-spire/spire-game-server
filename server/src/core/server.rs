@@ -1,8 +1,8 @@
+use crate::auth::auth_room;
 use crate::core::config::*;
 use crate::core::resource::Resource;
 use crate::core::room::{RoomContext, RoomMessage};
-use crate::core::rooms::station_room;
-use crate::core::session::{run_session, InMessage, OutMessage, Session, SessionContext};
+use crate::core::session::{run_session, InMessage, OutMessage, SessionContext};
 use crate::player::PlayerBundle;
 use crate::player::account::*;
 use std::collections::HashMap;
@@ -15,10 +15,10 @@ use tokio::task::JoinSet;
 
 pub enum ServerMessage {
     Broadcast(OutMessage),
-    SessionAuthenticated { session_ctx: Arc<SessionContext>, account: Account, character_id: u64 },
-    SessionClosed(Arc<SessionContext>),
-    RoomTransferBegin { player_bundle: Box<PlayerBundle>, target: u64 },
-    RoomTransferCommit { player_bundle: Box<PlayerBundle>, target: u64 },
+    SessionAuthenticated { session_ctx: SessionContext, account: Account, character_id: u64 },
+    SessionClosed(SessionContext),
+    RoomTransferBegin { player_bundle: PlayerBundle, target: u64 },
+    RoomTransferCommit { player_bundle: PlayerBundle, target: u64 },
 }
 
 pub struct ServerContext {
@@ -45,7 +45,7 @@ pub async fn run_server(options: ServerRunOptions) -> Result<(), Box<dyn Error>>
     let ctx_listen = ctx.clone();
     let ctx_handle = ctx.clone();
     let auth_room_ctx = auth_room::run(ctx.clone(), shutdown_tx.subscribe());
-    let station_room_ctx = station_room::run(ctx.clone(), shutdown_tx.subscribe());
+    // let station_room_ctx = station_room::run(ctx.clone(), shutdown_tx.subscribe());
     
     let resource = Arc::new(Resource::load().await);
     let resource_handle = resource.clone();
@@ -84,8 +84,12 @@ async fn listen(
         tokio::select! {
             result = listener.accept() => match result {
                 Ok((socket, _)) => {
-                    let in_message_tx = auth_room_ctx.in_message_tx.clone();
-                    accept(ctx.clone(), socket, in_message_tx, shutdown_rx.resubscribe());
+                    if let Err(e) = socket.set_nodelay(true) {
+                        eprintln!("Error setting nodelay: {}", e);
+                        return;
+                    }
+
+                    _ = auth_room_ctx.message_tx.send(RoomMessage::SessionEnter(socket)).await;
                 },
                 Err(e) => {
                     eprintln!("Error accepting game connection: {}", e);
@@ -94,23 +98,6 @@ async fn listen(
             _ = shutdown_rx.recv() => break,
         }
     }
-}
-
-fn accept(
-    ctx: Arc<ServerContext>,
-    stream: TcpStream,
-    in_message_tx: mpsc::Sender<InMessage>,
-    shutdown_rx: broadcast::Receiver<()>,
-) {
-    if let Err(e) = stream.set_nodelay(true) {
-        eprintln!("Error setting nodelay: {}", e);
-        return;
-    }
-
-    tokio::spawn(async move {
-        let session_ctx = run_session(stream, in_message_tx, shutdown_rx).await;
-        _ = ctx.message_tx.send(ServerMessage::SessionClosed(session_ctx)).await;
-    });
 }
 
 async fn handle(

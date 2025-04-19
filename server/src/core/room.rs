@@ -2,12 +2,13 @@ use bevy_ecs::world::World;
 use crate::core::server::ServerContext;
 use crate::core::session::{InMessage, OutMessage, SessionContext};
 use std::sync::Arc;
+use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time;
 
 pub enum RoomMessage {
+    SessionEnter(TcpStream),
     Broadcast(OutMessage),
-    RoomTransferCommit { session_ctx: SessionContext },
 }
 
 pub struct RoomContext {
